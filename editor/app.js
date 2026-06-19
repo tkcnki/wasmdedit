@@ -1,5 +1,5 @@
 /* ==========================================================================
-   WasmDEdit Application Logic
+   WasmDEdit Application Logic (Bidirectional WYSIWYG Edition)
    ========================================================================== */
 
 // --- Global Constants & State ---
@@ -9,6 +9,16 @@ let syncScrollEnabled = true;
 let isScrollingEditor = false;
 let isScrollingPreview = false;
 let debounceTimer;
+
+// Mode state: 'source' (Markdown text) or 'visual' (WYSIWYG contenteditable)
+let currentMode = 'source'; 
+
+// Modal editing state
+let activeEditingElement = null;
+let activeEditingType = null;
+
+// Table editing state
+let activeTableCell = null;
 
 // DOM Elements
 const textarea = document.getElementById('markdown-textarea');
@@ -20,6 +30,9 @@ const linesCounter = document.getElementById('counter-lines');
 const wordsCounter = document.getElementById('counter-words');
 const sidebar = document.getElementById('sidebar-templates');
 const workspaceLayout = document.getElementById('workspace-layout');
+const editorModal = document.getElementById('editor-modal');
+const modalTextarea = document.getElementById('modal-textarea');
+const modalTitle = document.getElementById('modal-title');
 
 // --- Initial Markdown Template ---
 const welcomeMarkdown = `# 🚀 WasmDEdit へようこそ！
@@ -31,18 +44,18 @@ Goの**WebAssembly (WASM)**と**Mermaid**を組み合わせた、高速でモダ
 
 1. **Go WASM による超高速パース**:
    GitHub Flavored Markdown (GFM) に対応した \`goldmark\` パーサーがブラウザ上で動作します。
-2. **Mermaid図表の統合**:
-   シーケンス図、フローチャート、ガントチャートなどをリアルタイムにプレビューに描画します。
-3. **シンクロスクロール**:
+2. **ビジュアル（WYSIWYG）モード**:
+   「**ビジュアル**」タブに切り替えることで、レンダリング画面上で直接文字入力や装飾が行えます。
+3. **Mermaid図表の統合**:
+   シーケンス図、フローチャート、ガントチャートなどをリアルタイムにプレビューに描画します。ビジュアルモード中も、図にホバーして「Mermaid編集」ボタンを押すことで安全に編集できます。
+4. **シンクロスクロール**:
    エディタ側のスクロールに合わせて、プレビュー側が自動的にスクロールします。
-4. **エクスポート機能**:
+5. **エクスポート機能**:
    Raw Markdown (\`.md\`)、スタイルが同梱された完全な HTML (\`.html\`)、および PDF印刷 に対応。
 
 ---
 
 ## 📊 GFM機能のテスト
-
-### 1. テーブル
 
 | 機能 | 技術スタック | WASM / JS | 状態 |
 | :--- | :--- | :---: | :---: |
@@ -50,13 +63,9 @@ Goの**WebAssembly (WASM)**と**Mermaid**を組み合わせた、高速でモダ
 | 図表レンダリング | Mermaid.js | JS | ✅ 動作中 |
 | シンタックスハイライト | Prism.js | JS | ✅ 動作中 |
 
-### 2. タスクリスト
-
 - [x] WebAssemblyモジュールを作成する
 - [x] Mermaid.jsのレンダリングエンジンを統合する
-- [ ] クラウド同期機能の実装（予定）
-
-### 3. コードブロック (Prism.js によるハイライト)
+- [x] 双方向WYSIWYG編集機能を実装する
 
 \`\`\`go
 package main
@@ -81,8 +90,6 @@ graph TD
     D --> F[プレビュー表示]
     E --> F
 \`\`\`
-
-左側の「**図表挿入**」メニューからテンプレートを選択すると、いつでも様々なMermaidのダイアグラムを追加できます。
 `;
 
 // --- Mermaid Templates Data ---
@@ -207,6 +214,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Restore from LocalStorage or Load Welcome markdown
         const savedMarkdown = localStorage.getItem('wasmdedit_markdown');
         const savedFilename = localStorage.getItem('wasmdedit_filename');
+        const savedMode = localStorage.getItem('wasmdedit_mode');
         
         if (savedMarkdown !== null) {
             textarea.value = savedMarkdown;
@@ -217,11 +225,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         updateFilenameDisplay();
         updateMetadata();
+        
+        // Initial parse
         renderMarkdown();
+        
+        // Restore Mode
+        if (savedMode && savedMode === 'visual') {
+            toggleMode('visual');
+        } else {
+            toggleMode('source');
+        }
     }
     
     // 3. Register Event Listeners
     setupEventListeners();
+    
+    // 4. Setup Drag and Drop File Handling
+    setupDragAndDrop();
 });
 
 // --- WebAssembly Loader ---
@@ -262,7 +282,7 @@ function initMermaid() {
     });
 }
 
-// --- Markdown Renderer ---
+// --- Markdown Renderer (Source -> HTML) ---
 function renderMarkdown() {
     if (!wasmReady) return;
     
@@ -274,19 +294,26 @@ function renderMarkdown() {
     // Insert HTML into preview
     previewOutput.innerHTML = htmlOutput;
     
+    // Save raw codes for code blocks before Prism mutates the DOM
+    previewOutput.querySelectorAll('pre code').forEach(codeEl => {
+        const preEl = codeEl.parentElement;
+        if (!preEl.hasAttribute('data-raw-code')) {
+            preEl.setAttribute('data-raw-code', codeEl.textContent);
+        }
+    });
+    
     // Trigger Prism.js syntax highlighting for standard code blocks
     Prism.highlightAllUnder(previewOutput);
     
     // Asynchronously render Mermaid diagrams
     renderMermaidDiagrams();
     
-    // Autosave
+    // Autosave Markdown source
     localStorage.setItem('wasmdedit_markdown', markdownText);
 }
 
 // --- Mermaid Render Engine ---
 async function renderMermaidDiagrams() {
-    // Find all markdown code blocks generated for mermaid
     const mermaidCodes = previewOutput.querySelectorAll('pre code.language-mermaid');
     
     for (let i = 0; i < mermaidCodes.length; i++) {
@@ -294,91 +321,780 @@ async function renderMermaidDiagrams() {
         const preElement = codeElement.parentElement;
         const rawCode = codeElement.textContent.trim();
         
-        // Create container wrapper for style and isolation
         const container = document.createElement('div');
         container.className = 'mermaid-container';
+        container.setAttribute('data-mermaid-code', rawCode);
+        container.setAttribute('contenteditable', 'false');
         
-        // Unique ID for SVG generation
         const renderId = `mermaid-render-${Date.now()}-${i}`;
         
         try {
-            // Render Mermaid to SVG text
             const { svg } = await mermaid.render(renderId, rawCode);
             container.innerHTML = svg;
         } catch (err) {
             console.error("Mermaid Render Error:", err);
             
-            // Format error box
             const errorElement = document.createElement('div');
             errorElement.className = 'mermaid-error';
             errorElement.textContent = `Mermaid 構文エラー:\n${err.message || err}`;
             container.appendChild(errorElement);
             
-            // Recover mermaid core parser from crash
             initMermaid();
         }
         
-        // Replace the raw <pre> block with the rendered container
         if (preElement.parentNode) {
             preElement.replaceWith(container);
         }
     }
+    
+    // Setup hover edit buttons for WYSIWYG visual mode
+    if (currentMode === 'visual') {
+        setupEditableBlocks();
+    }
+}
+
+// --- WYSIWYG Editable Block Wrapper Generator ---
+function setupEditableBlocks() {
+    // 1. Wrap Mermaid Diagrams
+    const mermaidContainers = previewOutput.querySelectorAll('.mermaid-container');
+    mermaidContainers.forEach((container) => {
+        if (container.parentElement.classList.contains('editable-block-wrapper')) return;
+        
+        container.setAttribute('contenteditable', 'false');
+        
+        const wrapper = document.createElement('div');
+        wrapper.className = 'editable-block-wrapper';
+        wrapper.setAttribute('contenteditable', 'false');
+        container.parentNode.insertBefore(wrapper, container);
+        wrapper.appendChild(container);
+        
+        const overlay = document.createElement('div');
+        overlay.className = 'block-edit-overlay';
+        overlay.setAttribute('contenteditable', 'false');
+        overlay.innerHTML = `<button class="btn-edit-block" contenteditable="false"><i class="fa-solid fa-pen"></i> Mermaid編集</button>`;
+        wrapper.appendChild(overlay);
+        
+        overlay.querySelector('button').addEventListener('click', (e) => {
+            e.stopPropagation();
+            openEditModal(container, 'mermaid');
+        });
+    });
+    
+    // 2. Wrap Standard Code Blocks (pre tags)
+    const preTags = previewOutput.querySelectorAll('pre');
+    preTags.forEach((pre) => {
+        // Skip if this pre is actually a mermaid block that will be rendered later asynchronously
+        const codeEl = pre.querySelector('code');
+        if (codeEl && codeEl.classList.contains('language-mermaid')) return;
+        
+        if (pre.closest('.mermaid-container')) return; // Skip if inside mermaid
+        if (pre.parentElement.classList.contains('editable-block-wrapper')) return;
+        
+        pre.setAttribute('contenteditable', 'false');
+        
+        // Ensure data-raw-code is stored
+        if (!pre.hasAttribute('data-raw-code')) {
+            pre.setAttribute('data-raw-code', codeEl ? codeEl.textContent : pre.textContent);
+        }
+        
+        const wrapper = document.createElement('div');
+        wrapper.className = 'editable-block-wrapper';
+        wrapper.setAttribute('contenteditable', 'false');
+        pre.parentNode.insertBefore(wrapper, pre);
+        wrapper.appendChild(pre);
+        
+        const overlay = document.createElement('div');
+        overlay.className = 'block-edit-overlay';
+        overlay.setAttribute('contenteditable', 'false');
+        overlay.innerHTML = `<button class="btn-edit-block" contenteditable="false"><i class="fa-solid fa-pen"></i> コード編集</button>`;
+        wrapper.appendChild(overlay);
+        
+        overlay.querySelector('button').addEventListener('click', (e) => {
+            e.stopPropagation();
+            openEditModal(pre, 'code');
+        });
+    });
+}
+
+// --- Visual to Source Synchronizer (HTML -> Markdown) ---
+function syncVisualToSource() {
+    if (!wasmReady) return;
+    
+    // Clone node to strip overlays and formatting classes before sending to parser
+    const docClone = previewOutput.cloneNode(true);
+    
+    // Remove all edit overlays
+    docClone.querySelectorAll('.block-edit-overlay').forEach(el => el.remove());
+    
+    // Unwrap the editable-block-wrapper divs
+    docClone.querySelectorAll('.editable-block-wrapper').forEach(wrapper => {
+        const child = wrapper.firstElementChild;
+        if (child) {
+            wrapper.parentNode.insertBefore(child, wrapper);
+        }
+        wrapper.remove();
+    });
+    
+    // Remove all zero-width spaces (\u200B) globally
+    const htmlContent = docClone.innerHTML.replace(/\u200B/g, '');
+    
+    // Call the Go WASM HTML to Markdown parser
+    const markdown = window.convertHtmlToMarkdown(htmlContent);
+    
+    // Update the textarea value
+    textarea.value = markdown;
+    
+    // Save to local storage and update stats
+    localStorage.setItem('wasmdedit_markdown', markdown);
+    updateMetadata();
+}
+
+// --- Mode Switcher Logic ---
+function toggleMode(mode) {
+    if (mode === currentMode) return;
+    
+    const btnSource = document.getElementById('btn-mode-source');
+    const btnVisual = document.getElementById('btn-mode-visual');
+    
+    if (mode === 'visual') {
+        // Sync source to visual first
+        renderMarkdown();
+        
+        // Toggle view containers
+        workspaceLayout.className = 'workspace-panels view-preview';
+        previewOutput.setAttribute('contenteditable', 'true');
+        
+        // Hide scroll sync button
+        document.getElementById('btn-sync-scroll-toggle').style.display = 'none';
+        
+        // Active states
+        btnSource.classList.remove('active');
+        btnVisual.classList.add('active');
+        currentMode = 'visual';
+        
+        // Set up the code/mermaid edit wraps
+        setupEditableBlocks();
+        
+        // Focus on preview
+        previewOutput.focus();
+    } else {
+        // Sync visual to source
+        syncVisualToSource();
+        
+        // Restore layout
+        workspaceLayout.className = 'workspace-panels';
+        previewOutput.setAttribute('contenteditable', 'false');
+        
+        // Show scroll sync button
+        document.getElementById('btn-sync-scroll-toggle').style.display = 'flex';
+        
+        // Active states
+        btnSource.classList.add('active');
+        btnVisual.classList.remove('active');
+        currentMode = 'source';
+        
+        // Re-highlight the markdown text code block rendering
+        renderMarkdown();
+        
+        // Focus on textarea
+        textarea.focus();
+    }
+    
+    localStorage.setItem('wasmdedit_mode', currentMode);
+}
+
+// --- Modal Dialog for Code Blocks Editing ---
+function openEditModal(element, type) {
+    activeEditingElement = element;
+    activeEditingType = type;
+    
+    let code = "";
+    if (type === 'mermaid') {
+        modalTitle.innerHTML = '<i class="fa-solid fa-diagram-project"></i> Mermaid ダイアグラム編集';
+        code = element.getAttribute('data-mermaid-code') || "";
+    } else {
+        modalTitle.innerHTML = '<i class="fa-solid fa-code"></i> コードブロック編集';
+        code = element.getAttribute('data-raw-code') || element.textContent || "";
+    }
+    
+    modalTextarea.value = code;
+    
+    editorModal.classList.add('active');
+    modalTextarea.focus();
+}
+
+function closeEditModal() {
+    editorModal.classList.remove('active');
+    activeEditingElement = null;
+    activeEditingType = null;
+}
+
+async function saveEditModal() {
+    if (!activeEditingElement) return;
+    
+    const editedCode = modalTextarea.value;
+    
+    if (activeEditingType === 'mermaid') {
+        // Update raw code attribute
+        activeEditingElement.setAttribute('data-mermaid-code', editedCode);
+        
+        // Re-render the diagram
+        const renderId = `mermaid-render-${Date.now()}`;
+        activeEditingElement.innerHTML = `<div class="mermaid-loading"><i class="fa-solid fa-spinner fa-spin"></i> レンダリング中...</div>`;
+        
+        try {
+            const { svg } = await mermaid.render(renderId, editedCode);
+            activeEditingElement.innerHTML = svg;
+        } catch (err) {
+            console.error(err);
+            activeEditingElement.innerHTML = `<div class="mermaid-error">Mermaid 構文エラー:\n${err.message || err}</div>`;
+            initMermaid();
+        }
+    } else {
+        // Standard code block
+        activeEditingElement.setAttribute('data-raw-code', editedCode);
+        
+        // Get lang
+        const codeNode = activeEditingElement.querySelector('code');
+        const langClass = codeNode ? codeNode.className : 'language-text';
+        
+        activeEditingElement.innerHTML = `<code class="${langClass}"></code>`;
+        const newCodeNode = activeEditingElement.querySelector('code');
+        newCodeNode.textContent = editedCode;
+        
+        // Reapply syntax highlighting
+        Prism.highlightElement(newCodeNode);
+    }
+    
+    // Sync WYSIWYG back to Markdown source
+    syncVisualToSource();
+    closeEditModal();
+}
+
+// --- Selection Manipulators in WYSIWYG ---
+function insertNodeAtSelection(node) {
+    const selection = window.getSelection();
+    if (selection.getRangeAt && selection.rangeCount) {
+        const range = selection.getRangeAt(0);
+        range.deleteContents();
+        range.insertNode(node);
+        
+        // Move selection cursor after the node
+        range.setStartAfter(node);
+        range.setEndAfter(node);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+}
+
+function insertMermaidVisualTemplate(templateText) {
+    const rawCode = templateText.replace(/```mermaid\n|```/g, '').trim();
+    
+    const container = document.createElement('div');
+    container.className = 'mermaid-container';
+    container.setAttribute('data-mermaid-code', rawCode);
+    container.setAttribute('contenteditable', 'false');
+    container.innerHTML = `<div class="mermaid-loading"><i class="fa-solid fa-spinner fa-spin"></i> レンダリング中...</div>`;
+    
+    insertNodeAtSelection(container);
+    
+    // Wrap it
+    const wrapper = document.createElement('div');
+    wrapper.className = 'editable-block-wrapper';
+    wrapper.setAttribute('contenteditable', 'false');
+    container.parentNode.insertBefore(wrapper, container);
+    wrapper.appendChild(container);
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'block-edit-overlay';
+    overlay.setAttribute('contenteditable', 'false');
+    overlay.innerHTML = `<button class="btn-edit-block" contenteditable="false"><i class="fa-solid fa-pen"></i> Mermaid編集</button>`;
+    wrapper.appendChild(overlay);
+    
+    overlay.querySelector('button').addEventListener('click', (e) => {
+        e.stopPropagation();
+        openEditModal(container, 'mermaid');
+    });
+    
+    // Render Async
+    const renderId = `mermaid-render-${Date.now()}`;
+    mermaid.render(renderId, rawCode).then(({ svg }) => {
+        container.innerHTML = svg;
+        syncVisualToSource();
+    }).catch(err => {
+        console.error(err);
+        container.innerHTML = `<div class="mermaid-error">Mermaid 構文エラー:\n${err.message || err}</div>`;
+        initMermaid();
+        syncVisualToSource();
+    });
 }
 
 // --- Debounce Helper ---
 function debounceRender() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-        renderMarkdown();
-        updateMetadata();
+        if (currentMode === 'source') {
+            renderMarkdown();
+            updateMetadata();
+        } else {
+            syncVisualToSource();
+        }
     }, 300);
 }
 
 // --- Stats & Line Counters ---
 function updateMetadata() {
     const text = textarea.value;
-    
-    // Line count
     const lines = text.split('\n').length;
     linesCounter.textContent = `行数: ${lines}`;
-    
-    // Character count (excluding newlines for accuracy in JP)
     const chars = text.replace(/\n/g, '').length;
     wordsCounter.textContent = `文字数: ${chars}`;
+}
+
+// --- Formatting Core Operations ---
+function formatText(command, value = null) {
+    if (currentMode === 'source') {
+        let tokenBefore = '';
+        let tokenAfter = '';
+        
+        switch (command) {
+            case 'bold':
+                tokenBefore = '**'; tokenAfter = '**'; break;
+            case 'italic':
+                tokenBefore = '*'; tokenAfter = '*'; break;
+            case 'strikeThrough':
+                tokenBefore = '~~'; tokenAfter = '~~'; break;
+            case 'h1':
+                tokenBefore = '\n# '; break;
+            case 'h2':
+                tokenBefore = '\n## '; break;
+            case 'h3':
+                tokenBefore = '\n### '; break;
+            case 'ul':
+                tokenBefore = '\n- '; break;
+            case 'ol':
+                tokenBefore = '\n1. '; break;
+            case 'table':
+                tokenBefore = '\n\n| ヘッダー1 | ヘッダー2 |\n| --- | --- |\n| セル1 | セル2 |\n\n'; break;
+        }
+        
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const text = textarea.value;
+        const selectedText = text.substring(start, end);
+        
+        const replacement = tokenBefore + selectedText + tokenAfter;
+        textarea.value = text.substring(0, start) + replacement + text.substring(end);
+        
+        textarea.focus();
+        textarea.selectionStart = start + tokenBefore.length;
+        textarea.selectionEnd = start + tokenBefore.length + selectedText.length;
+        
+        debounceRender();
+    } else {
+        switch (command) {
+            case 'bold':
+                document.execCommand('bold'); break;
+            case 'italic':
+                document.execCommand('italic'); break;
+            case 'strikeThrough':
+                document.execCommand('strikeThrough'); break;
+            case 'h1':
+                document.execCommand('formatBlock', false, '<h1>'); break;
+            case 'h2':
+                document.execCommand('formatBlock', false, '<h2>'); break;
+            case 'h3':
+                document.execCommand('formatBlock', false, '<h3>'); break;
+            case 'ul':
+                document.execCommand('insertUnorderedList'); break;
+            case 'ol':
+                document.execCommand('insertOrderedList'); break;
+            case 'table':
+                const table = document.createElement('table');
+                table.innerHTML = `
+                    <thead>
+                        <tr><th>ヘッダー1</th><th>ヘッダー2</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>セル1</td><td>セル2</td></tr>
+                    </tbody>
+                `;
+                insertNodeAtSelection(table);
+                break;
+        }
+        syncVisualToSource();
+    }
+}
+
+// --- Visual Mode Auto-Formatting Helpers ---
+function getParentBlock(node) {
+    let curr = node;
+    while (curr && curr !== previewOutput) {
+        if (curr.nodeType === Node.ELEMENT_NODE) {
+            const tag = curr.tagName.toLowerCase();
+            if (['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'td', 'th'].includes(tag)) {
+                return curr;
+            }
+        }
+        curr = curr.parentNode;
+    }
+    return null;
+}
+
+// Convert current block to heading tag
+function formatBlock(block, newTag, prefix) {
+    let contentText = block.textContent;
+    if (contentText.startsWith(prefix)) {
+        contentText = contentText.substring(prefix.length);
+    }
+    
+    const newBlock = document.createElement(newTag);
+    newBlock.textContent = contentText || '\u200B';
+    
+    block.parentNode.replaceChild(newBlock, block);
+    
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(newBlock);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    
+    syncVisualToSource();
+}
+
+// Convert current block to bullet or ordered list
+function formatBlockList(block, listTag, prefix) {
+    let contentText = block.textContent;
+    if (contentText.startsWith(prefix)) {
+        contentText = contentText.substring(prefix.length);
+    }
+    
+    const list = document.createElement(listTag);
+    const li = document.createElement('li');
+    li.textContent = contentText || '\u200B';
+    list.appendChild(li);
+    
+    block.parentNode.replaceChild(list, block);
+    
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(li);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    
+    syncVisualToSource();
+}
+
+function checkInlineFormatting(textNode) {
+    if (textNode.nodeType !== Node.TEXT_NODE) return;
+    const text = textNode.nodeValue;
+    
+    const boldRegex = /(?<!\*)\*\*([^*]+?)\*\*(?!\*)/;
+    const strikeRegex = /(?<!~)~~([^~]+?)~~(?!~)/;
+    const italicRegex = /(?<!\*)\*([^*]+?)\*(?!\*)/;
+    
+    let match = text.match(boldRegex);
+    let tag = 'strong';
+    
+    if (!match) {
+        match = text.match(strikeRegex);
+        tag = 'del';
+    }
+    if (!match) {
+        match = text.match(italicRegex);
+        tag = 'em';
+    }
+    
+    if (match) {
+        const fullMatch = match[0];
+        const content = match[1];
+        const index = match.index;
+        
+        const parent = textNode.parentNode;
+        const beforeText = text.substring(0, index);
+        let afterText = text.substring(index + fullMatch.length);
+        
+        // Prevent sticky formatting: if the text after the inline element is empty,
+        // insert a zero-width space (\u200B) to ensure the caret can "escape" the inline style.
+        let usesZeroWidthSpace = false;
+        if (afterText === "") {
+            afterText = "\u200B";
+            usesZeroWidthSpace = true;
+        }
+        
+        const beforeNode = document.createTextNode(beforeText);
+        const formattedNode = document.createElement(tag);
+        formattedNode.textContent = content;
+        const afterNode = document.createTextNode(afterText);
+        
+        parent.insertBefore(beforeNode, textNode);
+        parent.insertBefore(formattedNode, textNode);
+        parent.insertBefore(afterNode, textNode);
+        textNode.remove();
+        
+        const selection = window.getSelection();
+        const range = document.createRange();
+        // Position caret after the zero-width space to write outside the style node
+        range.setStart(afterNode, usesZeroWidthSpace ? 1 : 0);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        
+        syncVisualToSource();
+        checkInlineFormatting(afterNode);
+    }
+}
+
+function handleVisualModeInput(e) {
+    if (currentMode !== 'visual') return;
+    
+    const selection = window.getSelection();
+    if (!selection.rangeCount) return;
+    
+    const range = selection.getRangeAt(0);
+    const node = range.startContainer;
+    
+    const block = getParentBlock(node);
+    if (block) {
+        const text = block.textContent;
+        const tag = block.tagName.toLowerCase();
+        
+        if (tag === 'p' || tag === 'div' || tag === 'span' || tag.startsWith('h')) {
+            if (text.startsWith('# ')) {
+                formatBlock(block, 'h1', '# ');
+                return;
+            } else if (text.startsWith('## ')) {
+                formatBlock(block, 'h2', '## ');
+                return;
+            } else if (text.startsWith('### ')) {
+                formatBlock(block, 'h3', '### ');
+                return;
+            } else if (text.startsWith('- ') || text.startsWith('* ')) {
+                const prefix = text.startsWith('- ') ? '- ' : '* ';
+                formatBlockList(block, 'ul', prefix);
+                return;
+            } else if (text.startsWith('1. ')) {
+                formatBlockList(block, 'ol', '1. ');
+                return;
+            }
+        }
+    }
+    
+    // Check inline formatting (bold, strikethrough, italic)
+    checkInlineFormatting(node);
+}
+
+// --- Visual Table Column / Row Editors ---
+function handleTableFocus() {
+    if (currentMode !== 'visual') {
+        document.getElementById('table-tools').style.display = 'none';
+        activeTableCell = null;
+        return;
+    }
+    
+    const selection = window.getSelection();
+    if (!selection.rangeCount) {
+        document.getElementById('table-tools').style.display = 'none';
+        activeTableCell = null;
+        return;
+    }
+    
+    let curr = selection.getRangeAt(0).startContainer;
+    let cell = null;
+    
+    while (curr && curr !== previewOutput) {
+        if (curr.nodeType === Node.ELEMENT_NODE) {
+            const tag = curr.tagName.toLowerCase();
+            if (tag === 'td' || tag === 'th') {
+                cell = curr;
+                break;
+            }
+        }
+        curr = curr.parentNode;
+    }
+    
+    const tableTools = document.getElementById('table-tools');
+    if (cell) {
+        activeTableCell = cell;
+        tableTools.style.display = 'flex';
+    } else {
+        activeTableCell = null;
+        tableTools.style.display = 'none';
+    }
+}
+
+// Add row below currently focused cell
+function tableAddRow() {
+    if (!activeTableCell) return;
+    const tr = activeTableCell.closest('tr');
+    const table = activeTableCell.closest('table');
+    if (!tr || !table) return;
+    
+    const cellCount = tr.cells.length;
+    const newTr = document.createElement('tr');
+    
+    // Cells added to new rows are ALWAYS <td> data cells
+    for (let i = 0; i < cellCount; i++) {
+        const newCell = document.createElement('td');
+        newCell.innerHTML = 'セル';
+        newTr.appendChild(newCell);
+    }
+    
+    const parentTag = tr.parentNode.tagName.toLowerCase();
+    if (parentTag === 'thead') {
+        // If focused in the header row, insert new row into tbody (as the first row)
+        let tbody = table.querySelector('tbody');
+        if (!tbody) {
+            tbody = document.createElement('tbody');
+            table.appendChild(tbody);
+        }
+        tbody.insertBefore(newTr, tbody.firstChild);
+    } else {
+        // Normal insert below the current row
+        tr.parentNode.insertBefore(newTr, tr.nextSibling);
+    }
+    
+    syncVisualToSource();
+}
+
+// Add column to the right of currently focused cell
+function tableAddColumn() {
+    if (!activeTableCell) return;
+    const tr = activeTableCell.closest('tr');
+    const table = activeTableCell.closest('table');
+    if (!tr || !table) return;
+    
+    const colIndex = activeTableCell.cellIndex;
+    const rows = table.querySelectorAll('tr');
+    
+    rows.forEach(row => {
+        const cellTag = row.parentNode.tagName.toLowerCase() === 'thead' ? 'th' : 'td';
+        const newCell = document.createElement(cellTag);
+        newCell.innerHTML = 'セル';
+        
+        if (colIndex < row.cells.length) {
+            row.insertBefore(newCell, row.cells[colIndex].nextSibling);
+        } else {
+            row.appendChild(newCell);
+        }
+    });
+    
+    syncVisualToSource();
+}
+
+// Delete currently focused row
+function tableDeleteRow() {
+    if (!activeTableCell) return;
+    const tr = activeTableCell.closest('tr');
+    const table = activeTableCell.closest('table');
+    if (!tr || !table) return;
+    
+    tr.remove();
+    
+    document.getElementById('table-tools').style.display = 'none';
+    activeTableCell = null;
+    
+    if (!table.querySelector('tr')) {
+        table.remove();
+    }
+    
+    syncVisualToSource();
+}
+
+// Delete currently focused column
+function tableDeleteColumn() {
+    if (!activeTableCell) return;
+    const table = activeTableCell.closest('table');
+    if (!table) return;
+    
+    const colIndex = activeTableCell.cellIndex;
+    const rows = table.querySelectorAll('tr');
+    
+    rows.forEach(row => {
+        if (colIndex < row.cells.length) {
+            row.deleteCell(colIndex);
+        }
+    });
+    
+    document.getElementById('table-tools').style.display = 'none';
+    activeTableCell = null;
+    
+    const firstRow = table.querySelector('tr');
+    if (!firstRow || firstRow.cells.length === 0) {
+        table.remove();
+    }
+    
+    syncVisualToSource();
 }
 
 // --- Sync Scrolling System ---
 function setupSyncScroll() {
     textarea.addEventListener('scroll', () => {
-        if (!syncScrollEnabled || isScrollingPreview) return;
+        if (currentMode === 'visual' || !syncScrollEnabled || isScrollingPreview) return;
         isScrollingEditor = true;
-        
         const scrollPct = textarea.scrollTop / (textarea.scrollHeight - textarea.clientHeight);
         previewContainer.scrollTop = scrollPct * (previewContainer.scrollHeight - previewContainer.clientHeight);
-        
         setTimeout(() => { isScrollingEditor = false; }, 50);
     });
 
     previewContainer.addEventListener('scroll', () => {
-        if (!syncScrollEnabled || isScrollingEditor) return;
+        if (currentMode === 'visual' || !syncScrollEnabled || isScrollingEditor) return;
         isScrollingPreview = true;
-        
         const scrollPct = previewContainer.scrollTop / (previewContainer.scrollHeight - previewContainer.clientHeight);
         textarea.scrollTop = scrollPct * (textarea.scrollHeight - textarea.clientHeight);
-        
         setTimeout(() => { isScrollingPreview = false; }, 50);
     });
 }
 
 // --- Event Listeners Setup ---
 function setupEventListeners() {
-    // Input monitoring
+    // Mode Switch events
+    document.getElementById('btn-mode-source').addEventListener('click', () => { toggleMode('source'); handleTableFocus(); });
+    document.getElementById('btn-mode-visual').addEventListener('click', () => { toggleMode('visual'); handleTableFocus(); });
+    
+    // Formatting buttons event listeners
+    document.getElementById('btn-fmt-bold').addEventListener('click', () => formatText('bold'));
+    document.getElementById('btn-fmt-italic').addEventListener('click', () => formatText('italic'));
+    document.getElementById('btn-fmt-strike').addEventListener('click', () => formatText('strikeThrough'));
+    document.getElementById('btn-fmt-h1').addEventListener('click', () => formatText('h1'));
+    document.getElementById('btn-fmt-h2').addEventListener('click', () => formatText('h2'));
+    document.getElementById('btn-fmt-h3').addEventListener('click', () => formatText('h3'));
+    document.getElementById('btn-fmt-ul').addEventListener('click', () => formatText('ul'));
+    document.getElementById('btn-fmt-ol').addEventListener('click', () => formatText('ol'));
+    document.getElementById('btn-fmt-table').addEventListener('click', () => formatText('table'));
+    
+    // Table Tools buttons event listeners
+    document.getElementById('btn-table-add-row').addEventListener('click', tableAddRow);
+    document.getElementById('btn-table-add-col').addEventListener('click', tableAddColumn);
+    document.getElementById('btn-table-del-row').addEventListener('click', tableDeleteRow);
+    document.getElementById('btn-table-del-col').addEventListener('click', tableDeleteColumn);
+    
+    // Edit Modal events
+    document.getElementById('btn-close-modal').addEventListener('click', closeEditModal);
+    document.getElementById('btn-cancel-modal').addEventListener('click', closeEditModal);
+    document.getElementById('btn-save-modal').addEventListener('click', saveEditModal);
+    
+    // Listen for WYSIWYG changes
+    previewOutput.addEventListener('input', (e) => {
+        if (currentMode === 'visual') {
+            handleVisualModeInput(e);
+            debounceRender();
+        }
+    });
+    
+    // Track table cell focus in visual mode
+    previewOutput.addEventListener('click', handleTableFocus);
+    previewOutput.addEventListener('keyup', handleTableFocus);
+    
+    // Textarea input
     textarea.addEventListener('input', debounceRender);
     
-    // Sync scroll setup
+    // Sync scroll
     setupSyncScroll();
     
-    // Toolbar Buttons
+    // Toolbar buttons
     document.getElementById('btn-new').addEventListener('click', fileNew);
     document.getElementById('btn-open').addEventListener('click', () => document.getElementById('file-input').click());
     document.getElementById('file-input').addEventListener('change', fileOpen);
@@ -389,62 +1105,88 @@ function setupEventListeners() {
     // Theme Toggle
     document.getElementById('btn-theme-toggle').addEventListener('click', toggleTheme);
     
-    // Sidebar Control
+    // Sidebar Toggle
     const btnToggleSidebar = document.getElementById('btn-toggle-sidebar');
     btnToggleSidebar.addEventListener('click', () => {
         sidebar.classList.toggle('collapsed');
         btnToggleSidebar.classList.toggle('active');
     });
     
-    // Clean Text Button
+    // Clear Text
     document.getElementById('btn-clear-text').addEventListener('click', () => {
         if (confirm("テキストをすべてクリアしますか？")) {
             textarea.value = '';
+            previewOutput.innerHTML = '';
             textarea.focus();
             debounceRender();
         }
     });
 
-    // Scroll Sync toggle
+    // Sync scroll button
     const btnSyncScroll = document.getElementById('btn-sync-scroll-toggle');
     btnSyncScroll.addEventListener('click', () => {
         syncScrollEnabled = !syncScrollEnabled;
         btnSyncScroll.classList.toggle('active');
     });
     
-    // Responsive view buttons
+    // Layout views
     const btnViewEditor = document.getElementById('btn-view-editor');
     const btnViewSplit = document.getElementById('btn-view-split');
     const btnViewPreview = document.getElementById('btn-view-preview');
     
     btnViewEditor.addEventListener('click', () => {
+        if (currentMode === 'visual') return; // Split controls disabled in visual
         setViewLayout('view-editor');
         setActiveViewButton(btnViewEditor);
     });
     
     btnViewSplit.addEventListener('click', () => {
+        if (currentMode === 'visual') return;
         setViewLayout('view-split');
         setActiveViewButton(btnViewSplit);
     });
     
     btnViewPreview.addEventListener('click', () => {
+        if (currentMode === 'visual') return;
         setViewLayout('view-preview');
         setActiveViewButton(btnViewPreview);
     });
     
-    // Mermaid Template Insertion
+    // Templates insertion
     document.querySelectorAll('.tpl-btn').forEach(button => {
         button.addEventListener('click', (e) => {
             const templateKey = button.getAttribute('data-template');
             const templateText = templates[templateKey];
-            if (templateText) {
+            if (!templateText) return;
+            
+            if (currentMode === 'source') {
                 insertTextAtCursor(templateText);
+            } else {
+                insertMermaidVisualTemplate(templateText);
             }
         });
     });
     
-    // Keyboard Shortcuts
+    // Keyboard shortcuts
     window.addEventListener('keydown', (e) => {
+        // Ctrl+Alt+S / Ctrl+Alt+V for mode switching
+        if (e.ctrlKey && e.altKey && e.key === 's') {
+            e.preventDefault();
+            toggleMode('source');
+        }
+        if (e.ctrlKey && e.altKey && e.key === 'v') {
+            e.preventDefault();
+            toggleMode('visual');
+        }
+        // Formatting shortcuts
+        if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+            e.preventDefault();
+            formatText('bold');
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
+            e.preventDefault();
+            formatText('italic');
+        }
         if ((e.ctrlKey || e.metaKey) && e.key === 's') {
             e.preventDefault();
             fileSave();
@@ -471,17 +1213,15 @@ function setupEventListeners() {
 function handleTextareaKeydown(e) {
     if (e.key === 'Tab') {
         e.preventDefault();
-        insertTextAtCursor('    '); // 4 spaces for Tab
+        insertTextAtCursor('    '); 
     }
     
     if (e.key === 'Enter') {
-        // Auto-indentation helper
         const cursorPosition = textarea.selectionStart;
         const textBeforeCursor = textarea.value.substring(0, cursorPosition);
         const lastLineStart = textBeforeCursor.lastIndexOf('\n') + 1;
         const lastLine = textBeforeCursor.substring(lastLineStart);
         
-        // Find leading spaces or tabs
         const match = lastLine.match(/^([ \t]+)/);
         if (match) {
             e.preventDefault();
@@ -498,7 +1238,6 @@ function insertTextAtCursor(text) {
     
     textarea.value = originalText.substring(0, startPos) + text + originalText.substring(endPos);
     
-    // Reposition cursor after the inserted text
     const newCursorPos = startPos + text.length;
     textarea.selectionStart = newCursorPos;
     textarea.selectionEnd = newCursorPos;
@@ -513,6 +1252,12 @@ function fileNew() {
         textarea.value = welcomeMarkdown;
         currentFilename = 'untitled.md';
         updateFilenameDisplay();
+        
+        if (currentMode === 'visual') {
+            renderMarkdown();
+        } else {
+            renderMarkdown();
+        }
         debounceRender();
     }
 }
@@ -526,15 +1271,23 @@ function fileOpen(e) {
         textarea.value = event.target.result;
         currentFilename = file.name;
         updateFilenameDisplay();
+        
+        if (currentMode === 'visual') {
+            renderMarkdown();
+        } else {
+            renderMarkdown();
+        }
         debounceRender();
         
-        // Reset file input value to allow opening same file again
         e.target.value = '';
     };
     reader.readAsText(file);
 }
 
 function fileSave() {
+    if (currentMode === 'visual') {
+        syncVisualToSource();
+    }
     const blob = new Blob([textarea.value], { type: 'text/markdown;charset=utf-8' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -556,7 +1309,6 @@ function toggleTheme() {
     document.documentElement.setAttribute('data-theme', newTheme);
     localStorage.setItem('wasmdedit_theme', newTheme);
     
-    // Swap Prism.js stylesheet theme
     const prismThemeLink = document.getElementById('prism-theme');
     if (newTheme === 'dark') {
         prismThemeLink.href = "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css";
@@ -564,12 +1316,15 @@ function toggleTheme() {
         prismThemeLink.href = "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css";
     }
     
-    // Re-initialize Mermaid with the appropriate theme
     initMermaid();
     
-    // Force re-render of diagrams to apply the new theme
     if (wasmReady) {
-        renderMarkdown();
+        if (currentMode === 'visual') {
+            syncVisualToSource();
+            renderMarkdown();
+        } else {
+            renderMarkdown();
+        }
     }
 }
 
@@ -604,16 +1359,21 @@ function setActiveViewButton(activeBtn) {
 
 // --- Export to HTML (Self-contained Page) ---
 async function exportToHTML() {
-    // Generate styled HTML page with content
-    const parsedHtml = previewOutput.innerHTML;
+    if (currentMode === 'visual') {
+        syncVisualToSource();
+    }
+    
+    // Re-render standard HTML to ensure clean DOM
+    renderMarkdown();
+    
+    // Strip zero-width space (\u200B) from exported HTML
+    const parsedHtml = previewOutput.innerHTML.replace(/\u200B/g, '');
     const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
     const activeTheme = isDark ? 'dark' : 'light';
-    
     const prismThemeUrl = isDark 
         ? "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"
         : "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css";
 
-    // Build the standalone HTML document
     const htmlDocString = `<!DOCTYPE html>
 <html lang="ja" data-theme="${activeTheme}">
 <head>
@@ -721,11 +1481,328 @@ async function exportToHTML() {
 </body>
 </html>`;
 
-    // Download the file
     const blob = new Blob([htmlDocString], { type: 'text/html;charset=utf-8' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = currentFilename.replace('.md', '.html');
     link.click();
     URL.revokeObjectURL(link.href);
+    
+    // Restore visual blocks wrapper if in visual mode
+    if (currentMode === 'visual') {
+        setupEditableBlocks();
+    }
+}
+
+// --- Drag and Drop File Handlers ---
+let isInternalDragging = false;
+
+function setupDragAndDrop() {
+    const dropZone = document.getElementById('drop-zone-overlay');
+    let dragCounter = 0;
+    
+    window.addEventListener('dragstart', (e) => {
+        isInternalDragging = true;
+    });
+    
+    window.addEventListener('dragend', (e) => {
+        isInternalDragging = false;
+    });
+    
+    window.addEventListener('dragenter', (e) => {
+        if (isInternalDragging) return;
+        
+        // Only trigger overlay and prevent default if dragging actual files
+        if (e.dataTransfer && e.dataTransfer.types.includes('Files')) {
+            e.preventDefault();
+            dragCounter++;
+            dropZone.classList.add('active');
+        }
+    });
+    
+    window.addEventListener('dragover', (e) => {
+        if (isInternalDragging) return;
+        
+        if (e.dataTransfer && e.dataTransfer.types.includes('Files')) {
+            e.preventDefault();
+        }
+    });
+    
+    window.addEventListener('dragleave', (e) => {
+        if (isInternalDragging) return;
+        
+        if (e.dataTransfer && e.dataTransfer.types.includes('Files')) {
+            e.preventDefault();
+            dragCounter--;
+            if (dragCounter === 0) {
+                dropZone.classList.remove('active');
+            }
+        }
+    });
+    
+    window.addEventListener('drop', (e) => {
+        if (isInternalDragging) return;
+        
+        if (e.dataTransfer && e.dataTransfer.types.includes('Files')) {
+            e.preventDefault();
+            dragCounter = 0;
+            dropZone.classList.remove('active');
+            
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                // Synchronously capture the drop coordinates/position
+                const dropPosition = getDropPosition(e);
+                handleDroppedFiles(e.dataTransfer.files, dropPosition);
+            }
+        }
+    });
+}
+
+function getDropPosition(e) {
+    if (currentMode === 'source') {
+        if (e.target === textarea) {
+            return {
+                mode: 'source',
+                offset: textarea.selectionStart
+            };
+        } else {
+            return {
+                mode: 'source',
+                offset: textarea.selectionStart
+            };
+        }
+    } else {
+        // Visual mode: contenteditable caret position from coordinates
+        let range = null;
+        if (document.caretRangeFromPoint) {
+            range = document.caretRangeFromPoint(e.clientX, e.clientY);
+        } else if (document.caretPositionFromPoint) {
+            const position = document.caretPositionFromPoint(e.clientX, e.clientY);
+            if (position) {
+                range = document.createRange();
+                range.setStart(position.offsetNode, position.offset);
+                range.setEnd(position.offsetNode, position.offset);
+            }
+        } else if (e.rangeParent) {
+            range = document.createRange();
+            range.setStart(e.rangeParent, e.rangeOffset);
+            range.setEnd(e.rangeParent, e.rangeOffset);
+        }
+        
+        // Check if range is inside our editable visual output container
+        if (range && previewOutput.contains(range.startContainer)) {
+            return {
+                mode: 'visual',
+                range: range
+            };
+        } else {
+            const selection = window.getSelection();
+            if (selection.rangeCount > 0) {
+                return {
+                    mode: 'visual',
+                    range: selection.getRangeAt(0).cloneRange()
+                };
+            }
+        }
+    }
+    return null;
+}
+
+async function uploadFileToServer(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const response = await fetch('/upload', {
+        method: 'POST',
+        body: formData
+    });
+    
+    if (!response.ok) {
+        throw new Error('Upload failed: ' + response.statusText);
+    }
+    
+    return await response.json(); // returns { url: '/uploads/...', filename: '...' }
+}
+
+async function handleDroppedFiles(files, dropPosition) {
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const isTextFile = file.type === 'text/plain' || 
+                           file.name.endsWith('.md') || 
+                           file.name.endsWith('.markdown') || 
+                           file.name.endsWith('.txt');
+        
+        if (isTextFile) {
+            // Text files are read and inserted directly into the cursor position
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const text = event.target.result;
+                insertTextAtPosition(text, dropPosition);
+            };
+            reader.readAsText(file);
+        } else {
+            // Image or other binary files: upload to local server
+            try {
+                const result = await uploadFileToServer(file);
+                const isImage = file.type.startsWith('image/');
+                insertFileLinkAtPosition(result.url, result.filename, isImage, dropPosition);
+            } catch (err) {
+                console.error("Upload failed, falling back to Base64 data URL for images", err);
+                if (file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const base64Data = event.target.result;
+                        const filename = file.name || 'image.png';
+                        insertImageAtPosition(base64Data, filename, dropPosition);
+                    };
+                    reader.readAsDataURL(file);
+                } else {
+                    alert("ファイルのアップロードに失敗しました: " + err.message);
+                }
+            }
+        }
+    }
+}
+
+function insertTextAtPosition(text, dropPosition) {
+    if (dropPosition && dropPosition.mode === 'source') {
+        const startPos = dropPosition.offset;
+        const originalText = textarea.value;
+        textarea.value = originalText.substring(0, startPos) + text + originalText.substring(startPos);
+        
+        const newCursorPos = startPos + text.length;
+        textarea.selectionStart = newCursorPos;
+        textarea.selectionEnd = newCursorPos;
+        textarea.focus();
+        debounceRender();
+    } else if (dropPosition && dropPosition.mode === 'visual' && dropPosition.range) {
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(dropPosition.range);
+        
+        const textNode = document.createTextNode(text);
+        insertNodeAtSelection(textNode);
+        syncVisualToSource();
+    } else {
+        // Fallback to cursor position
+        if (currentMode === 'source') {
+            insertTextAtCursor(text);
+        } else {
+            const textNode = document.createTextNode(text);
+            insertNodeAtSelection(textNode);
+            syncVisualToSource();
+        }
+    }
+}
+
+function insertFileLinkAtPosition(url, filename, isImage, dropPosition) {
+    if (dropPosition && dropPosition.mode === 'source') {
+        const markdownLink = isImage ? `![${filename}](${url})` : `[${filename}](${url})`;
+        const startPos = dropPosition.offset;
+        const originalText = textarea.value;
+        textarea.value = originalText.substring(0, startPos) + markdownLink + originalText.substring(startPos);
+        
+        const newCursorPos = startPos + markdownLink.length;
+        textarea.selectionStart = newCursorPos;
+        textarea.selectionEnd = newCursorPos;
+        textarea.focus();
+        debounceRender();
+    } else if (dropPosition && dropPosition.mode === 'visual' && dropPosition.range) {
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(dropPosition.range);
+        
+        let node;
+        if (isImage) {
+            node = document.createElement('img');
+            node.src = url;
+            node.alt = filename;
+            node.style.maxWidth = '100%';
+            node.style.height = 'auto';
+            node.style.borderRadius = '8px';
+            node.style.border = '1px solid var(--border-color)';
+        } else {
+            node = document.createElement('a');
+            node.href = url;
+            node.textContent = filename;
+            node.target = '_blank';
+        }
+        
+        insertNodeAtSelection(node);
+        syncVisualToSource();
+    } else {
+        // Fallback
+        if (currentMode === 'source') {
+            const markdownLink = isImage ? `![${filename}](${url})` : `[${filename}](${url})`;
+            insertTextAtCursor(markdownLink);
+        } else {
+            let node;
+            if (isImage) {
+                node = document.createElement('img');
+                node.src = url;
+                node.alt = filename;
+                node.style.maxWidth = '100%';
+                node.style.height = 'auto';
+                node.style.borderRadius = '8px';
+                node.style.border = '1px solid var(--border-color)';
+            } else {
+                node = document.createElement('a');
+                node.href = url;
+                node.textContent = filename;
+                node.target = '_blank';
+            }
+            insertNodeAtSelection(node);
+            syncVisualToSource();
+        }
+    }
+}
+
+function insertImageAtPosition(base64Data, filename, dropPosition) {
+    if (dropPosition && dropPosition.mode === 'source') {
+        const markdownImage = `![${filename}](${base64Data})`;
+        const startPos = dropPosition.offset;
+        const originalText = textarea.value;
+        textarea.value = originalText.substring(0, startPos) + markdownImage + originalText.substring(startPos);
+        
+        const newCursorPos = startPos + markdownImage.length;
+        textarea.selectionStart = newCursorPos;
+        textarea.selectionEnd = newCursorPos;
+        textarea.focus();
+        debounceRender();
+    } else if (dropPosition && dropPosition.mode === 'visual' && dropPosition.range) {
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(dropPosition.range);
+        
+        const img = document.createElement('img');
+        img.src = base64Data;
+        img.alt = filename;
+        img.style.maxWidth = '100%';
+        img.style.height = 'auto';
+        img.style.borderRadius = '8px';
+        img.style.border = '1px solid var(--border-color)';
+        
+        insertNodeAtSelection(img);
+        syncVisualToSource();
+    } else {
+        // Fallback
+        insertImageAtCursor(base64Data, filename);
+    }
+}
+
+function insertImageAtCursor(base64Data, filename) {
+    if (currentMode === 'source') {
+        const markdownImage = `![${filename}](${base64Data})`;
+        insertTextAtCursor(markdownImage);
+    } else {
+        const img = document.createElement('img');
+        img.src = base64Data;
+        img.alt = filename;
+        img.style.maxWidth = '100%';
+        img.style.height = 'auto';
+        img.style.borderRadius = '8px';
+        img.style.border = '1px solid var(--border-color)';
+        
+        insertNodeAtSelection(img);
+        syncVisualToSource();
+    }
 }

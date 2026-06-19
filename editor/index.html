@@ -33,6 +33,69 @@
             </div>
             
             <div class="toolbar">
+                <!-- Editor Mode Switcher -->
+                <div class="tool-group mode-toggle-group">
+                    <button id="btn-mode-source" class="active" title="ソースモード (Ctrl+Alt+S)">
+                        <i class="fa-solid fa-code"></i> <span>ソース</span>
+                    </button>
+                    <button id="btn-mode-visual" title="ビジュアルモード (Ctrl+Alt+V)">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> <span>ビジュアル</span>
+                    </button>
+                </div>
+                
+                <span class="separator"></span>
+
+                <!-- Text Formatting Group -->
+                <div class="tool-group format-group">
+                    <button id="btn-fmt-bold" title="太字 (Ctrl+B)">
+                        <i class="fa-solid fa-bold"></i>
+                    </button>
+                    <button id="btn-fmt-italic" title="斜体 (Ctrl+I)">
+                        <i class="fa-solid fa-italic"></i>
+                    </button>
+                    <button id="btn-fmt-strike" title="打ち消し線">
+                        <i class="fa-solid fa-strikethrough"></i>
+                    </button>
+                    <span class="mini-separator"></span>
+                    <button id="btn-fmt-h1" title="見出し1">
+                        <span style="font-weight:bold; font-size:0.85rem;">H1</span>
+                    </button>
+                    <button id="btn-fmt-h2" title="見出し2">
+                        <span style="font-weight:bold; font-size:0.75rem;">H2</span>
+                    </button>
+                    <button id="btn-fmt-h3" title="見出し3">
+                        <span style="font-weight:bold; font-size:0.65rem;">H3</span>
+                    </button>
+                    <span class="mini-separator"></span>
+                    <button id="btn-fmt-ul" title="箇条書きリスト">
+                        <i class="fa-solid fa-list-ul"></i>
+                    </button>
+                    <button id="btn-fmt-ol" title="番号付きリスト">
+                        <i class="fa-solid fa-list-ol"></i>
+                    </button>
+                    <button id="btn-fmt-table" title="テーブル挿入">
+                        <i class="fa-solid fa-table"></i>
+                    </button>
+                    <!-- Table Ops (hidden by default, shown when cursor inside table) -->
+                    <div id="table-tools" class="tool-group" style="display: none; gap: 0.25rem;">
+                        <span class="mini-separator"></span>
+                        <button id="btn-table-add-row" title="行を下に追加" style="padding: 0.45rem 0.4rem !important; font-size: 0.75rem;">
+                            <i class="fa-solid fa-arrow-down-long"></i> 行+
+                        </button>
+                        <button id="btn-table-add-col" title="列を右に追加" style="padding: 0.45rem 0.4rem !important; font-size: 0.75rem;">
+                            <i class="fa-solid fa-arrow-right-long"></i> 列+
+                        </button>
+                        <button id="btn-table-del-row" title="行を削除" style="padding: 0.45rem 0.4rem !important; font-size: 0.75rem; color: var(--color-danger);">
+                            <i class="fa-solid fa-trash-can"></i> 行-
+                        </button>
+                        <button id="btn-table-del-col" title="列を削除" style="padding: 0.45rem 0.4rem !important; font-size: 0.75rem; color: var(--color-danger);">
+                            <i class="fa-solid fa-trash-can"></i> 列-
+                        </button>
+                    </div>
+                </div>
+
+                <span class="separator"></span>
+
                 <!-- File Ops -->
                 <div class="tool-group">
                     <button id="btn-new" title="新規ドキュメント (Ctrl+N)">
@@ -226,6 +289,31 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markup.min.js"></script>
     
+    <!-- Code / Mermaid Editor Modal -->
+    <div id="editor-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">コードブロック編集</h3>
+                <button id="btn-close-modal" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <textarea id="modal-textarea" placeholder="ここにコードを入力してください..." spellcheck="false"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-cancel-modal" class="secondary-btn">キャンセル</button>
+                <button id="btn-save-modal" class="primary-btn">適用</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Drag and Drop Overlay -->
+    <div id="drop-zone-overlay" class="drop-zone-overlay">
+        <div class="drop-zone-content">
+            <i class="fa-solid fa-file-arrow-up drop-icon"></i>
+            <p>ファイル（画像・テキスト）をドロップして挿入</p>
+        </div>
+    </div>
+
     <!-- App Logic -->
     <script src="app.js"></script>
 </body>

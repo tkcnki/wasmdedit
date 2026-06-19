@@ -23,6 +23,7 @@
     --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.3);
     --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.4);
     --glass-blur: blur(12px);
+    --bg-drop-overlay: rgba(14, 15, 18, 0.45);
     
     /* Code highlights overrides for dark */
     --code-bg: #1a1c23;
@@ -49,6 +50,7 @@
     --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.08);
     --shadow-lg: 0 16px 32px rgba(0, 0, 0, 0.12);
     --glass-blur: blur(12px);
+    --bg-drop-overlay: rgba(241, 245, 249, 0.5);
 
     /* Code highlights overrides for light */
     --code-bg: #f8fafc;
@@ -118,9 +120,12 @@ button {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    height: 60px;
+    min-height: 60px;
+    height: auto;
     z-index: 10;
     box-shadow: var(--shadow-sm);
+    flex-wrap: wrap;
+    gap: 1rem;
 }
 
 .header-logo {
@@ -159,13 +164,17 @@ button {
 .toolbar {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.5rem;
+    flex-grow: 1;
+    justify-content: flex-end;
+    flex-wrap: wrap;
 }
 
 .tool-group {
     display: flex;
     align-items: center;
-    gap: 0.35rem;
+    gap: 0.25rem;
+    flex-shrink: 0;
 }
 
 .separator {
@@ -173,17 +182,44 @@ button {
     height: 20px;
     background-color: var(--border-color);
     margin: 0 0.25rem;
+    flex-shrink: 0;
+}
+
+.mini-separator {
+    width: 1px;
+    height: 14px;
+    background-color: var(--border-color);
+    margin: 0 0.15rem;
+    opacity: 0.6;
+    flex-shrink: 0;
+}
+
+.format-group button {
+    padding: 0.45rem 0.5rem !important;
+    min-width: 32px;
+    justify-content: center;
+}
+
+#btn-table-del-row:hover, #btn-table-del-col:hover {
+    background-color: rgba(239, 68, 68, 0.1) !important;
+    border-color: rgba(239, 68, 68, 0.3) !important;
 }
 
 .toolbar button {
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    padding: 0.45rem 0.75rem;
+    padding: 0.45rem 0.6rem;
     border-radius: 6px;
     color: var(--color-text-muted);
     font-weight: 500;
     border: 1px solid transparent;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.toolbar button span {
+    white-space: nowrap;
 }
 
 .toolbar button:hover {
@@ -698,6 +734,187 @@ button {
     }
 }
 
+/* --- WYSIWYG / Visual Mode Styles --- */
+
+/* Visual Editor Focus State */
+#preview-output[contenteditable="true"] {
+    outline: none;
+    min-height: 100%;
+    caret-color: var(--color-primary);
+    padding: 0.5rem;
+    border-radius: 4px;
+    transition: box-shadow 0.2s ease;
+}
+
+#preview-output[contenteditable="true"]:focus {
+    box-shadow: 0 0 8px var(--color-primary-glow);
+}
+
+/* WYSIWYG editing block container */
+.editable-block-wrapper {
+    position: relative;
+    margin-bottom: 1rem;
+}
+
+.block-edit-overlay {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    z-index: 5;
+}
+
+.editable-block-wrapper:hover .block-edit-overlay {
+    opacity: 1;
+}
+
+.btn-edit-block {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.65rem;
+    background-color: rgba(19, 21, 26, 0.85);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    border: 1px solid var(--border-color);
+    color: var(--color-text);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.btn-edit-block:hover {
+    background-color: var(--color-primary);
+    color: #ffffff;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 8px var(--color-primary-glow);
+}
+
+/* Modal Dialog Overlay */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(10, 11, 14, 0.65);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: none; /* Controlled by JS */
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.modal-overlay.active {
+    display: flex;
+    opacity: 1;
+}
+
+.modal-content {
+    background-color: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    width: min(700px, 95vw);
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--shadow-lg);
+    transform: scale(0.95);
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.modal-overlay.active .modal-content {
+    transform: scale(1);
+}
+
+.modal-header {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.modal-header h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+.close-btn {
+    font-size: 1.5rem;
+    color: var(--color-text-muted);
+    line-height: 1;
+}
+
+.close-btn:hover {
+    color: var(--color-text);
+}
+
+.modal-body {
+    padding: 1.5rem;
+    flex: 1;
+    overflow-y: auto;
+}
+
+#modal-textarea {
+    width: 100%;
+    height: 350px;
+    background-color: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--color-text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    padding: 1rem;
+    resize: vertical;
+    outline: none;
+}
+
+#modal-textarea:focus {
+    border-color: var(--color-primary);
+}
+
+.modal-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+}
+
+.secondary-btn {
+    padding: 0.5rem 1rem;
+    background-color: var(--bg-app);
+    border: 1px solid var(--border-color);
+    color: var(--color-text-muted);
+    border-radius: 6px;
+    font-weight: 500;
+}
+
+.secondary-btn:hover {
+    background-color: var(--bg-active);
+    color: var(--color-text);
+}
+
+.primary-btn {
+    padding: 0.5rem 1rem;
+    background-color: var(--color-primary);
+    color: #ffffff;
+    border-radius: 6px;
+    font-weight: 500;
+}
+
+.primary-btn:hover {
+    background-color: var(--color-primary-hover);
+    box-shadow: 0 0 8px var(--color-primary-glow);
+}
+
 /* ==========================================================================
    Print Stylesheet (PDF Export)
    ========================================================================== */
@@ -809,3 +1026,76 @@ button {
         color: #555;
     }
 }
+
+/* --- Drag and Drop File Overlay --- */
+.drop-zone-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--bg-drop-overlay);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999; /* Ensure it is on top of modals */
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.drop-zone-overlay::before {
+    content: '';
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    right: 20px;
+    bottom: 20px;
+    border: 2px dashed var(--color-primary);
+    border-radius: 12px;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    pointer-events: none;
+}
+
+.drop-zone-overlay.active {
+    opacity: 1;
+}
+
+.drop-zone-overlay.active::before {
+    opacity: 1;
+}
+
+.drop-zone-content {
+    text-align: center;
+    color: var(--color-primary);
+    transform: scale(0.9);
+    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.drop-zone-overlay.active .drop-zone-content {
+    transform: scale(1);
+}
+
+.drop-icon {
+    font-size: 4.5rem;
+    margin-bottom: 1.5rem;
+    color: var(--color-primary);
+    filter: drop-shadow(0 0 15px var(--color-primary-glow));
+    animation: drop-pulse 1.8s infinite ease-in-out;
+}
+
+.drop-zone-content p {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+@keyframes drop-pulse {
+    0% { transform: scale(1); opacity: 0.85; filter: drop-shadow(0 0 10px var(--color-primary-glow)); }
+    50% { transform: scale(1.08); opacity: 1; filter: drop-shadow(0 0 25px var(--color-primary-glow)); }
+    100% { transform: scale(1); opacity: 0.85; filter: drop-shadow(0 0 10px var(--color-primary-glow)); }
+}
+
