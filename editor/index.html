@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WasmDEdit - WASM Markdown & Mermaid Editor</title>
+    <meta name="description" content="WebAssemblyで動作する高性能なMarkdown & Mermaidエディタ。リアルタイムプレビューと各種エクスポートに対応。">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Prism.js for Syntax Highlighting -->
+    <link id="prism-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- App Container -->
+    <div class="app-container">
+        
+        <!-- Header / Toolbar -->
+        <header class="app-header">
+            <div class="header-logo">
+                <i class="fa-brands fa-golang logo-icon"></i>
+                <h1>WasmDEdit</h1>
+                <span class="badge">Go WASM</span>
+            </div>
+            
+            <div class="toolbar">
+                <!-- File Ops -->
+                <div class="tool-group">
+                    <button id="btn-new" title="新規ドキュメント (Ctrl+N)">
+                        <i class="fa-solid fa-file-circle-plus"></i> <span>新規</span>
+                    </button>
+                    <button id="btn-open" title="Markdownファイルを開く (Ctrl+O)">
+                        <i class="fa-solid fa-folder-open"></i> <span>開く</span>
+                        <input type="file" id="file-input" accept=".md,.markdown,.txt" style="display: none;">
+                    </button>
+                    <button id="btn-save" title="Markdownファイルを保存 (Ctrl+S)">
+                        <i class="fa-solid fa-floppy-disk"></i> <span>保存</span>
+                    </button>
+                </div>
+                
+                <span class="separator"></span>
+                
+                <!-- Mermaid Templates Toggle -->
+                <div class="tool-group">
+                    <button id="btn-toggle-sidebar" class="active" title="Mermaidテンプレート">
+                        <i class="fa-solid fa-diagram-project"></i> <span>図表挿入</span>
+                    </button>
+                </div>
+
+                <span class="separator"></span>
+
+                <!-- View Toggle (For Responsive Screens) -->
+                <div class="tool-group view-toggle-group">
+                    <button id="btn-view-editor" title="エディタのみ表示">
+                        <i class="fa-solid fa-pen-nib"></i>
+                    </button>
+                    <button id="btn-view-split" class="active" title="分割表示">
+                        <i class="fa-solid fa-columns"></i>
+                    </button>
+                    <button id="btn-view-preview" title="プレビューのみ表示">
+                        <i class="fa-solid fa-eye"></i>
+                    </button>
+                </div>
+
+                <span class="separator"></span>
+                
+                <!-- Exports & Theme -->
+                <div class="tool-group">
+                    <button id="btn-export-html" title="HTMLファイルとしてエクスポート">
+                        <i class="fa-solid fa-code"></i> <span>HTML</span>
+                    </button>
+                    <button id="btn-export-pdf" title="PDFとして保存 / 印刷 (Ctrl+P)">
+                        <i class="fa-solid fa-file-pdf"></i> <span>PDF印刷</span>
+                    </button>
+                    <button id="btn-theme-toggle" class="theme-btn" title="テーマ切り替え">
+                        <i class="fa-solid fa-sun icon-sun"></i>
+                        <i class="fa-solid fa-moon icon-moon"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+        
+        <!-- Main Area -->
+        <main class="app-main">
+            <!-- Left Sidebar for Mermaid Templates -->
+            <aside class="app-sidebar" id="sidebar-templates">
+                <div class="sidebar-header">
+                    <h3>Mermaidテンプレート</h3>
+                </div>
+                <div class="sidebar-content">
+                    <div class="template-section">
+                        <h4>基本図表</h4>
+                        <button class="tpl-btn" data-template="flowchart">
+                            <i class="fa-solid fa-network-wired"></i> フローチャート
+                        </button>
+                        <button class="tpl-btn" data-template="sequence">
+                            <i class="fa-solid fa-arrows-left-right"></i> シーケンス図
+                        </button>
+                        <button class="tpl-btn" data-template="class-diagram">
+                            <i class="fa-solid fa-cube"></i> クラス図
+                        </button>
+                        <button class="tpl-btn" data-template="state">
+                            <i class="fa-solid fa-circle-nodes"></i> 状態遷移図
+                        </button>
+                    </div>
+                    
+                    <div class="template-section">
+                        <h4>進行・管理</h4>
+                        <button class="tpl-btn" data-template="gantt">
+                            <i class="fa-solid fa-chart-gantt"></i> ガントチャート
+                        </button>
+                        <button class="tpl-btn" data-template="git-graph">
+                            <i class="fa-solid fa-code-fork"></i> Gitグラフ
+                        </button>
+                        <button class="tpl-btn" data-template="pie-chart">
+                            <i class="fa-solid fa-chart-pie"></i> 円グラフ
+                        </button>
+                        <button class="tpl-btn" data-template="mindmap">
+                            <i class="fa-solid fa-brain"></i> マインドマップ
+                        </button>
+                    </div>
+                    
+                    <div class="template-section">
+                        <h4>その他</h4>
+                        <button class="tpl-btn" data-template="er-diagram">
+                            <i class="fa-solid fa-database"></i> ER図
+                        </button>
+                        <button class="tpl-btn" data-template="user-journey">
+                            <i class="fa-solid fa-route"></i> ユーザージャーニー
+                        </button>
+                    </div>
+                </div>
+            </aside>
+            
+            <!-- Editor / Preview Panel Workspace -->
+            <div class="workspace-panels" id="workspace-layout">
+                <!-- Editor Pane -->
+                <div class="panel-container pane-editor" id="pane-editor">
+                    <div class="pane-header">
+                        <div class="pane-title">
+                            <i class="fa-solid fa-align-left"></i> EDITOR
+                        </div>
+                        <div class="pane-actions">
+                            <button id="btn-clear-text" title="テキストをクリア" class="icon-only-btn">
+                                <i class="fa-solid fa-trash-can"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="editor-wrapper">
+                        <!-- Standard Textarea for editing -->
+                        <textarea id="markdown-textarea" placeholder="# ここにMarkdownを記述してください..." spellcheck="false"></textarea>
+                    </div>
+                </div>
+                
+                <!-- Preview Pane -->
+                <div class="panel-container pane-preview" id="pane-preview">
+                    <div class="pane-header">
+                        <div class="pane-title">
+                            <i class="fa-solid fa-square-poll-vertical"></i> PREVIEW
+                        </div>
+                        <div class="pane-actions">
+                            <button id="btn-sync-scroll-toggle" class="icon-only-btn active" title="スクロールの同期を切り替え">
+                                <i class="fa-solid fa-link"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="preview-wrapper" id="preview-container">
+                        <div id="preview-output" class="markdown-body">
+                            <!-- Rendered HTML will go here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+        
+        <!-- Footer / Status Bar -->
+        <footer class="app-footer">
+            <div class="status-left">
+                <span id="status-wasm" class="status-badge loading">
+                    <i class="fa-solid fa-circle-notch fa-spin"></i> WASM: ロード中...
+                </span>
+                <span class="status-item" id="filename-display">
+                    <i class="fa-regular fa-file"></i> untitled.md
+                </span>
+            </div>
+            
+            <div class="status-right">
+                <span class="status-item" id="counter-lines">
+                    行数: 0
+                </span>
+                <span class="status-item" id="counter-words">
+                    文字数: 0
+                </span>
+                <span class="status-item" id="autosave-indicator">
+                    <i class="fa-solid fa-cloud-arrow-up"></i> 自動保存有効
+                </span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Go WebAssembly Bridge -->
+    <script src="wasm_exec.js"></script>
+    
+    <!-- Mermaid.js -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    
+    <!-- Prism.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <!-- Add language support for Prism -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-go.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-rust.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-css.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markup.min.js"></script>
+    
+    <!-- App Logic -->
+    <script src="app.js"></script>
+</body>
+</html>

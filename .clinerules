@@ -1,0 +1,18 @@
+# AI Agent Rules (AIエージェント向け指示ルール)
+
+## Language Rules (言語ルール)
+- **Implementation Plan (`implementation_plan.md`)**:
+  You must write and update the implementation plan (`implementation_plan.md`) in Japanese.
+  (実装計画書（`implementation_plan.md`）は必ず日本語で記述・更新してください。)
+
+- **Task List (`task.md`)**:
+  The task tracking list (`task.md`) must be written in Japanese.
+  (タスクリスト（`task.md`）は必ず日本語で記述・更新してください。)
+
+- **Walkthrough (`walkthrough.md`)**:
+  The walkthrough and verification reports (`walkthrough.md`) must be written in Japanese.
+  (ウォークスルーおよび検証レポート（`walkthrough.md`）は必ず日本語で記述・更新してください。)
+
+- **Communication**:
+  Respond to the user in Japanese, and formulate plans and summaries in Japanese.
+  (ユーザーへの返答、進捗概要、コードの解説などは日本語で行ってください。)
