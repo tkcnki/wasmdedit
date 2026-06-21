@@ -242,6 +242,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // 4. Setup Drag and Drop File Handling
     setupDragAndDrop();
+
+    // 5. Setup Local Sync Folder (if enabled)
+    initLocalSync();
 });
 
 // --- WebAssembly Loader ---
@@ -1279,7 +1282,9 @@ function fileNew() {
     if (confirm("新規作成しますか？現在のデータは上書き保存されていない場合失われます。")) {
         textarea.value = welcomeMarkdown;
         currentFilename = 'untitled.md';
+        localSyncActiveFile = null; // Reset local sync active file
         updateFilenameDisplay();
+        refreshLocalFilesList(); // Clear active file highlights
         
         if (currentMode === 'visual') {
             renderMarkdown();
@@ -1312,10 +1317,20 @@ function fileOpen(e) {
     reader.readAsText(file);
 }
 
-function fileSave() {
+async function fileSave() {
     if (currentMode === 'visual') {
         syncVisualToSource();
     }
+    
+    if (localSyncEnabled && localSyncActiveFile) {
+        const success = await saveToLocalFile(localSyncActiveFile, textarea.value);
+        if (success) {
+            lastSavedContent = textarea.value;
+            showStatusNotification(`ローカルファイル "${localSyncActiveFile}" に保存しました`);
+            return;
+        }
+    }
+    
     const blob = new Blob([textarea.value], { type: 'text/markdown;charset=utf-8' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -1991,4 +2006,168 @@ function readBlobAsDataURL(blob) {
         reader.onerror = (e) => reject(e.target.error);
         reader.readAsDataURL(blob);
     });
+}
+
+// --- Local Sync Folder Integration ---
+let localSyncEnabled = false;
+let localSyncActiveFile = null;
+let lastSavedContent = "";
+
+async function initLocalSync() {
+    try {
+        const response = await fetch('/api/sync/config');
+        if (!response.ok) return;
+        const config = await response.json();
+        
+        if (config.enabled) {
+            localSyncEnabled = true;
+            document.getElementById('section-local-files').style.display = 'block';
+            
+            // Register button listener
+            document.getElementById('btn-sync-new-file').addEventListener('click', createNewLocalFile);
+            
+            // Periodically autosave to active local file if open
+            setInterval(autosaveToLocalFile, 2000);
+            
+            // Initial load of files
+            refreshLocalFilesList();
+        }
+    } catch (err) {
+        console.warn("Failed to initialize local directory sync:", err);
+    }
+}
+
+async function refreshLocalFilesList() {
+    if (!localSyncEnabled) return;
+    try {
+        const response = await fetch('/api/sync/files');
+        if (!response.ok) throw new Error("Failed to load local files");
+        const files = await response.json();
+        const container = document.getElementById('local-files-list');
+        container.innerHTML = '';
+        
+        if (!files || files.length === 0) {
+            container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);text-align:center;padding:0.5rem 0;">同期フォルダは空です</div>';
+            return;
+        }
+        
+        files.forEach(filename => {
+            const btn = document.createElement('button');
+            btn.className = 'tpl-btn';
+            btn.style.width = '100%';
+            btn.style.justifyContent = 'flex-start';
+            btn.style.textAlign = 'left';
+            btn.style.textOverflow = 'ellipsis';
+            btn.style.overflow = 'hidden';
+            btn.style.whiteSpace = 'nowrap';
+            btn.style.padding = '0.4rem 0.5rem';
+            btn.style.marginTop = '0.2rem';
+            
+            if (filename === localSyncActiveFile) {
+                btn.classList.add('active');
+                btn.style.borderLeft = '3px solid var(--color-primary)';
+                btn.style.background = 'rgba(56, 189, 248, 0.08)';
+            }
+            
+            btn.innerHTML = `<i class="fa-regular fa-file-lines" style="margin-right:0.5rem;"></i> ${filename}`;
+            btn.addEventListener('click', () => loadLocalFile(filename));
+            container.appendChild(btn);
+        });
+    } catch (err) {
+        console.error("Failed to refresh local files list:", err);
+    }
+}
+
+async function loadLocalFile(filename) {
+    if (!localSyncEnabled) return;
+    try {
+        const response = await fetch(`/api/sync/file?name=${encodeURIComponent(filename)}`);
+        if (!response.ok) throw new Error("Failed to read file");
+        const content = await response.text();
+        
+        textarea.value = content;
+        currentFilename = filename;
+        localSyncActiveFile = filename;
+        lastSavedContent = content;
+        
+        updateFilenameDisplay();
+        updateMetadata();
+        renderMarkdown();
+        refreshLocalFilesList();
+        
+        showStatusNotification(`ローカルファイル "${filename}" を読み込みました`);
+    } catch (err) {
+        alert("ファイルの読み込みに失敗しました: " + err.message);
+    }
+}
+
+async function saveToLocalFile(filename, content) {
+    if (!localSyncEnabled || !filename) return false;
+    try {
+        const response = await fetch(`/api/sync/file?name=${encodeURIComponent(filename)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/markdown' },
+            body: content
+        });
+        if (!response.ok) throw new Error("Failed to write file");
+        return true;
+    } catch (err) {
+        console.error("Failed to save local file:", err);
+        return false;
+    }
+}
+
+async function createNewLocalFile() {
+    if (!localSyncEnabled) return;
+    const filename = prompt("新しいファイル名を入力してください（例: memo.md）:", "new_document.md");
+    if (!filename) return;
+    
+    // Add extension if missing
+    let cleanName = filename.trim();
+    if (!cleanName.endsWith('.md') && !cleanName.endsWith('.markdown') && !cleanName.endsWith('.txt')) {
+        cleanName += '.md';
+    }
+    
+    const initialContent = `# ${cleanName.replace('.md', '')}\n\n新しいドキュメント`;
+    const success = await saveToLocalFile(cleanName, initialContent);
+    if (success) {
+        localSyncActiveFile = cleanName;
+        await loadLocalFile(cleanName);
+    } else {
+        alert("新規ファイルの作成に失敗しました。");
+    }
+}
+
+async function autosaveToLocalFile() {
+    if (!localSyncEnabled || !localSyncActiveFile) return;
+    
+    if (currentMode === 'visual') {
+        syncVisualToSource();
+    }
+    
+    const currentContent = textarea.value;
+    if (currentContent !== lastSavedContent) {
+        const success = await saveToLocalFile(localSyncActiveFile, currentContent);
+        if (success) {
+            lastSavedContent = currentContent;
+            const autosaveIndicator = document.getElementById('autosave-indicator');
+            if (autosaveIndicator) {
+                autosaveIndicator.innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i> ローカル同期済み';
+                autosaveIndicator.style.color = '#38bdf8';
+                setTimeout(() => {
+                    autosaveIndicator.innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i> 自動保存有効';
+                    autosaveIndicator.style.color = '';
+                }, 1000);
+            }
+        }
+    }
+}
+
+function showStatusNotification(message) {
+    const filenameDisplay = document.getElementById('filename-display');
+    const originalText = filenameDisplay.innerHTML;
+    filenameDisplay.innerHTML = `<i class="fa-solid fa-circle-info" style="color:var(--color-primary)"></i> ${message}`;
+    setTimeout(() => {
+        filenameDisplay.innerHTML = originalText;
+    }, 3000);
 }
