@@ -293,6 +293,7 @@ function renderMarkdown() {
     
     // Insert HTML into preview
     previewOutput.innerHTML = htmlOutput;
+    resolveLocalDBFiles(previewOutput);
     
     // Save raw codes for code blocks before Prism mutates the DOM
     previewOutput.querySelectorAll('pre code').forEach(codeEl => {
@@ -433,6 +434,20 @@ function syncVisualToSource() {
             wrapper.parentNode.insertBefore(child, wrapper);
         }
         wrapper.remove();
+    });
+    
+    // Restore db: ID to src and href attributes in clone before parsing to markdown
+    docClone.querySelectorAll('img').forEach(img => {
+        const dbId = img.getAttribute('data-db-id');
+        if (dbId) {
+            img.setAttribute('src', 'db:' + dbId);
+        }
+    });
+    docClone.querySelectorAll('a').forEach(link => {
+        const dbId = link.getAttribute('data-db-id');
+        if (dbId) {
+            link.setAttribute('href', 'db:' + dbId);
+        }
     });
     
     // Remove all zero-width spaces (\u200B) globally
@@ -1366,8 +1381,45 @@ async function exportToHTML() {
     // Re-render standard HTML to ensure clean DOM
     renderMarkdown();
     
+    // Clone previewOutput to resolve IndexedDB files to Base64 for export
+    const exportClone = previewOutput.cloneNode(true);
+    
+    const images = exportClone.querySelectorAll('img');
+    for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        const dbId = img.getAttribute('data-db-id');
+        if (dbId) {
+            try {
+                const record = await getFileFromDB(dbId);
+                if (record && record.blob) {
+                    const base64 = await readBlobAsDataURL(record.blob);
+                    img.src = base64;
+                }
+            } catch (err) {
+                console.error("Failed to convert image to Base64 for export", err);
+            }
+        }
+    }
+    
+    const links = exportClone.querySelectorAll('a');
+    for (let i = 0; i < links.length; i++) {
+        const link = links[i];
+        const dbId = link.getAttribute('data-db-id');
+        if (dbId) {
+            try {
+                const record = await getFileFromDB(dbId);
+                if (record && record.blob) {
+                    const base64 = await readBlobAsDataURL(record.blob);
+                    link.href = base64;
+                }
+            } catch (err) {
+                console.error("Failed to convert link file to Base64 for export", err);
+            }
+        }
+    }
+    
     // Strip zero-width space (\u200B) from exported HTML
-    const parsedHtml = previewOutput.innerHTML.replace(/\u200B/g, '');
+    const parsedHtml = exportClone.innerHTML.replace(/\u200B/g, '');
     const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
     const activeTheme = isDark ? 'dark' : 'light';
     const prismThemeUrl = isDark 
@@ -1497,6 +1549,122 @@ async function exportToHTML() {
 // --- Drag and Drop File Handlers ---
 let isInternalDragging = false;
 
+// IndexedDB Constants
+const DB_NAME = 'WasmDEditDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'files';
+let dbInstance = null;
+
+// Object URL cache to reuse urls and prevent leaks
+const objectURLCache = new Map();
+
+function initDB() {
+    return new Promise((resolve, reject) => {
+        if (dbInstance) {
+            resolve(dbInstance);
+            return;
+        }
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+            }
+        };
+        request.onsuccess = (e) => {
+            dbInstance = e.target.result;
+            resolve(dbInstance);
+        };
+        request.onerror = (e) => {
+            console.error("IndexedDB open failed", e);
+            reject(e.target.error);
+        };
+    });
+}
+
+function saveFileToDB(id, name, type, blob) {
+    return initDB().then(db => {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction([STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            const record = { id, name, type, blob };
+            const request = store.put(record);
+            request.onsuccess = () => resolve(id);
+            request.onerror = (e) => reject(e.target.error);
+        });
+    });
+}
+
+function getFileFromDB(id) {
+    return initDB().then(db => {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction([STORE_NAME], 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.get(id);
+            request.onsuccess = (e) => resolve(e.target.result);
+            request.onerror = (e) => reject(e.target.error);
+        });
+    });
+}
+
+function resolveLocalDBFiles(container) {
+    // 1. Resolve Images
+    const images = container.querySelectorAll('img');
+    images.forEach(img => {
+        const src = img.getAttribute('src');
+        if (src && src.startsWith('db:')) {
+            const id = src.substring(3);
+            img.setAttribute('data-db-id', id);
+            img.style.opacity = '0.5'; // Dim while loading
+            
+            // Check cache
+            if (objectURLCache.has(id)) {
+                img.src = objectURLCache.get(id);
+                img.style.opacity = '1';
+            } else {
+                getFileFromDB(id).then(record => {
+                    if (record && record.blob) {
+                        const objectURL = URL.createObjectURL(record.blob);
+                        objectURLCache.set(id, objectURL);
+                        img.src = objectURL;
+                        img.style.opacity = '1';
+                    } else {
+                        console.error("Image record not found in IndexedDB:", id);
+                        img.style.opacity = '1';
+                    }
+                }).catch(err => {
+                    console.error("Failed to load image from IndexedDB", err);
+                    img.style.opacity = '1';
+                });
+            }
+        }
+    });
+
+    // 2. Resolve Links
+    const links = container.querySelectorAll('a');
+    links.forEach(link => {
+        const href = link.getAttribute('href');
+        if (href && href.startsWith('db:')) {
+            const id = href.substring(3);
+            link.setAttribute('data-db-id', id);
+            
+            if (objectURLCache.has(id)) {
+                link.href = objectURLCache.get(id);
+            } else {
+                getFileFromDB(id).then(record => {
+                    if (record && record.blob) {
+                        const objectURL = URL.createObjectURL(record.blob);
+                        objectURLCache.set(id, objectURL);
+                        link.href = objectURL;
+                    }
+                }).catch(err => {
+                    console.error("Failed to load file from IndexedDB", err);
+                });
+            }
+        }
+    });
+}
+
 function setupDragAndDrop() {
     const dropZone = document.getElementById('drop-zone-overlay');
     let dragCounter = 0;
@@ -1607,22 +1775,6 @@ function getDropPosition(e) {
     return null;
 }
 
-async function uploadFileToServer(file) {
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    const response = await fetch('/upload', {
-        method: 'POST',
-        body: formData
-    });
-    
-    if (!response.ok) {
-        throw new Error('Upload failed: ' + response.statusText);
-    }
-    
-    return await response.json(); // returns { url: '/uploads/...', filename: '...' }
-}
-
 async function handleDroppedFiles(files, dropPosition) {
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
@@ -1640,13 +1792,21 @@ async function handleDroppedFiles(files, dropPosition) {
             };
             reader.readAsText(file);
         } else {
-            // Image or other binary files: upload to local server
+            // Image or other binary files: store in browser's local cache (IndexedDB)
             try {
-                const result = await uploadFileToServer(file);
+                const fileId = 'file_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+                const filename = file.name || 'file.bin';
                 const isImage = file.type.startsWith('image/');
-                insertFileLinkAtPosition(result.url, result.filename, isImage, dropPosition);
+                
+                await saveFileToDB(fileId, filename, file.type, file);
+                
+                // Create session-scoped temporary Object URL
+                const objectURL = URL.createObjectURL(file);
+                objectURLCache.set(fileId, objectURL);
+                
+                insertFileLinkAtPosition(fileId, objectURL, filename, isImage, dropPosition);
             } catch (err) {
-                console.error("Upload failed, falling back to Base64 data URL for images", err);
+                console.error("IndexedDB store failed, falling back to Base64 data URL for images", err);
                 if (file.type.startsWith('image/')) {
                     const reader = new FileReader();
                     reader.onload = (event) => {
@@ -1656,7 +1816,7 @@ async function handleDroppedFiles(files, dropPosition) {
                     };
                     reader.readAsDataURL(file);
                 } else {
-                    alert("ファイルのアップロードに失敗しました: " + err.message);
+                    alert("ローカルキャッシュへの保存に失敗しました: " + err.message);
                 }
             }
         }
@@ -1694,9 +1854,9 @@ function insertTextAtPosition(text, dropPosition) {
     }
 }
 
-function insertFileLinkAtPosition(url, filename, isImage, dropPosition) {
+function insertFileLinkAtPosition(id, url, filename, isImage, dropPosition) {
     if (dropPosition && dropPosition.mode === 'source') {
-        const markdownLink = isImage ? `![${filename}](${url})` : `[${filename}](${url})`;
+        const markdownLink = isImage ? `![${filename}](db:${id})` : `[${filename}](db:${id})`;
         const startPos = dropPosition.offset;
         const originalText = textarea.value;
         textarea.value = originalText.substring(0, startPos) + markdownLink + originalText.substring(startPos);
@@ -1716,6 +1876,7 @@ function insertFileLinkAtPosition(url, filename, isImage, dropPosition) {
             node = document.createElement('img');
             node.src = url;
             node.alt = filename;
+            node.setAttribute('data-db-id', id);
             node.style.maxWidth = '100%';
             node.style.height = 'auto';
             node.style.borderRadius = '8px';
@@ -1724,6 +1885,7 @@ function insertFileLinkAtPosition(url, filename, isImage, dropPosition) {
             node = document.createElement('a');
             node.href = url;
             node.textContent = filename;
+            node.setAttribute('data-db-id', id);
             node.target = '_blank';
         }
         
@@ -1732,7 +1894,7 @@ function insertFileLinkAtPosition(url, filename, isImage, dropPosition) {
     } else {
         // Fallback
         if (currentMode === 'source') {
-            const markdownLink = isImage ? `![${filename}](${url})` : `[${filename}](${url})`;
+            const markdownLink = isImage ? `![${filename}](db:${id})` : `[${filename}](db:${id})`;
             insertTextAtCursor(markdownLink);
         } else {
             let node;
@@ -1740,6 +1902,7 @@ function insertFileLinkAtPosition(url, filename, isImage, dropPosition) {
                 node = document.createElement('img');
                 node.src = url;
                 node.alt = filename;
+                node.setAttribute('data-db-id', id);
                 node.style.maxWidth = '100%';
                 node.style.height = 'auto';
                 node.style.borderRadius = '8px';
@@ -1748,6 +1911,7 @@ function insertFileLinkAtPosition(url, filename, isImage, dropPosition) {
                 node = document.createElement('a');
                 node.href = url;
                 node.textContent = filename;
+                node.setAttribute('data-db-id', id);
                 node.target = '_blank';
             }
             insertNodeAtSelection(node);
@@ -1805,4 +1969,13 @@ function insertImageAtCursor(base64Data, filename) {
         insertNodeAtSelection(img);
         syncVisualToSource();
     }
+}
+
+function readBlobAsDataURL(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = (e) => reject(e.target.error);
+        reader.readAsDataURL(blob);
+    });
 }
