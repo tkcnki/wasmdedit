@@ -32,14 +32,20 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'src/go.mod'
+
       - name: Prepare site directory
         run: |
-          mkdir dist
-          cp editor/index.html dist/
-          cp editor/styles.css dist/
-          cp editor/app.js dist/
-          cp editor/wasm_exec.js dist/
-          cp editor/main.wasm dist/
+          mkdir -p dist
+          cp src/index.html dist/
+          cp src/styles.css dist/
+          cp src/app.js dist/
+          cp src/wasm_exec.js dist/
+          cd src
+          GOOS=js GOARCH=wasm go build -o ../dist/main.wasm main.go
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
