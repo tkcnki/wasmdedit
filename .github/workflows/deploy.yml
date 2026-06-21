@@ -35,7 +35,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: 'src/go.mod'
+          go-version-file: 'go.mod'
 
       - name: Prepare site directory
         run: |

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"embed"
+	"io/fs"
 	"log"
 	"mime"
 	"net/http"
@@ -8,26 +10,24 @@ import (
 	"strings"
 )
 
+//go:embed dist/*
+var embeddedFiles embed.FS
+
 func main() {
 	// Explicitly map .wasm extension to application/wasm MIME type
 	if err := mime.AddExtensionType(".wasm", "application/wasm"); err != nil {
 		log.Printf("Warning: failed to add mime type for .wasm: %v", err)
 	}
 
-	// Find the dist directory (check "./dist" or "../dist")
-	dir := "dist"
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		if _, err := os.Stat("../dist"); err == nil {
-			dir = "../dist"
-		} else {
-			log.Println("Warning: 'dist' directory not found, serving current directory instead")
-			dir = "."
-		}
+	// Retrieve the subdirectory 'dist' from the embedded FS
+	distFS, err := fs.Sub(embeddedFiles, "dist")
+	if err != nil {
+		log.Fatalf("Failed to load embedded files: %v", err)
 	}
 
-	// Serve files from the dist directory
-	fs := http.FileServer(http.Dir(dir))
-	http.Handle("/", fs)
+	// Serve files from the embedded FS
+	fsServer := http.FileServer(http.FS(distFS))
+	http.Handle("/", fsServer)
 
 	port := os.Getenv("PORT")
 	if port == "" {

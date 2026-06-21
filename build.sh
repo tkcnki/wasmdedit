@@ -19,4 +19,8 @@ cd src
 GOOS=js GOARCH=wasm go build -o ../dist/main.wasm main.go
 cd ..
 
+# 4. Build native server binary (embedding dist/)
+echo "Compiling native server binary..."
+go build -o dist/server server.go
+
 echo "Build complete! Output is in the 'dist' directory."
