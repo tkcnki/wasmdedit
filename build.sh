@@ -35,6 +35,11 @@ cd ..
 
 # 4. Build native server binary (embedding dist/)
 echo "Compiling native server binary..."
-"$GO_BIN" build -o dist/server server.go
+mkdir -p bin
+"$GO_BIN" build -ldflags="-s -w" -o bin/server server.go
 
-echo "Build complete! Output is in the 'dist' directory."
+# 5. Build Windows server binary (embedding dist/)
+echo "Compiling Windows server binary (cross-compilation)..."
+GOOS=windows GOARCH=amd64 "$GO_BIN" build -ldflags="-s -w" -o bin/server.exe server.go
+
+echo "Build complete! Static assets are in 'dist', executables are in 'bin'."
