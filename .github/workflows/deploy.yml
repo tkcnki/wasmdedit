@@ -32,11 +32,20 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      - name: Prepare site directory
+        run: |
+          mkdir dist
+          cp editor/index.html dist/
+          cp editor/styles.css dist/
+          cp editor/app.js dist/
+          cp editor/wasm_exec.js dist/
+          cp editor/main.wasm dist/
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Deploy the editor directory containing index.html, main.wasm, etc.
-          path: './editor'
+          # Deploy the prepared dist directory containing only the web assets
+          path: './dist'
 
       - name: Deploy to GitHub Pages
         id: deployment
