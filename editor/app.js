@@ -249,12 +249,25 @@ async function loadWasm() {
     try {
         const go = new Go();
         let result;
-        if (WebAssembly.instantiateStreaming) {
-            result = await WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject);
-        } else {
+        
+        const fetchAndInstantiate = async () => {
             const response = await fetch("main.wasm");
+            if (!response.ok) {
+                throw new Error(`Failed to fetch main.wasm: status ${response.status} ${response.statusText}`);
+            }
             const bytes = await response.arrayBuffer();
-            result = await WebAssembly.instantiate(bytes, go.importObject);
+            return await WebAssembly.instantiate(bytes, go.importObject);
+        };
+
+        if (WebAssembly.instantiateStreaming) {
+            try {
+                result = await WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject);
+            } catch (err) {
+                console.warn("WebAssembly.instantiateStreaming failed, trying fallback:", err);
+                result = await fetchAndInstantiate();
+            }
+        } else {
+            result = await fetchAndInstantiate();
         }
         go.run(result.instance);
         
