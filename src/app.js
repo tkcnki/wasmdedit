@@ -677,6 +677,7 @@ function toggleMode(mode) {
     } else {
         // Sync visual to source
         syncVisualToSource();
+        hideTableIndicators();
         
         // Restore layout
         workspaceLayout.className = 'workspace-panels';
@@ -1083,6 +1084,214 @@ function handleVisualModeInput(e) {
     checkInlineFormatting(node);
 }
 
+// --- Visual Table Hover Border Insertion State & Helpers ---
+let currentHoverTable = null;
+let currentHoverColIndex = -1;
+let currentHoverRowIndex = -1;
+let currentHoverColPos = ''; // 'before' or 'after'
+let currentHoverRowPos = ''; // 'before' or 'after'
+let currentHoverBorderType = null; // 'col' or 'row'
+
+function hideTableIndicators() {
+    const colInd = document.getElementById('table-col-indicator');
+    const rowInd = document.getElementById('table-row-indicator');
+    if (colInd) colInd.style.display = 'none';
+    if (rowInd) rowInd.style.display = 'none';
+    
+    currentHoverTable = null;
+    currentHoverBorderType = null;
+}
+
+function handleTableBorderHover(e) {
+    if (currentMode !== 'visual') {
+        hideTableIndicators();
+        return;
+    }
+    
+    // 1. Keep state if hovering the indicators/buttons themselves
+    if (e.target.closest('.table-border-indicator')) {
+        return;
+    }
+    
+    const cell = e.target.closest('td, th');
+    const table = e.target.closest('table');
+    
+    // 2. Hide indicators if mouse leaves the table completely
+    if (!table) {
+        hideTableIndicators();
+        return;
+    }
+    
+    // Maintain current state if inside table but not directly on a cell
+    if (!cell) {
+        return;
+    }
+    
+    const rect = cell.getBoundingClientRect();
+    const mouseX = e.clientX;
+    const mouseY = e.clientY;
+    
+    const distLeft = mouseX - rect.left;
+    const distRight = rect.right - mouseX;
+    const distTop = mouseY - rect.top;
+    const distBottom = rect.bottom - mouseY;
+    
+    const threshold = 12; // slightly larger threshold (12px) for ease of hover
+    
+    const minColDist = Math.min(distLeft, distRight);
+    const minRowDist = Math.min(distTop, distBottom);
+    
+    let activeBorder = null;
+    
+    if (minColDist < threshold || minRowDist < threshold) {
+        if (minColDist < minRowDist && minColDist < threshold) {
+            activeBorder = 'col';
+        } else if (minRowDist < threshold) {
+            activeBorder = 'row';
+        }
+    }
+    
+    // 3. Sticky check: if not close enough to any border, do not clear the indicators
+    // immediately to allow users to move their cursor toward the + buttons safely.
+    if (!activeBorder) {
+        return;
+    }
+    
+    currentHoverTable = table;
+    currentHoverBorderType = activeBorder;
+    
+    const wrapper = document.getElementById('preview-container');
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const tableRect = table.getBoundingClientRect();
+    
+    const colInd = document.getElementById('table-col-indicator');
+    const rowInd = document.getElementById('table-row-indicator');
+    
+    if (activeBorder === 'col') {
+        if (rowInd) rowInd.style.display = 'none';
+        
+        let borderX = 0;
+        if (distLeft < distRight) {
+            borderX = rect.left;
+            currentHoverColIndex = cell.cellIndex;
+            currentHoverColPos = 'before';
+        } else {
+            borderX = rect.right;
+            currentHoverColIndex = cell.cellIndex;
+            currentHoverColPos = 'after';
+        }
+        
+        const relativeX = borderX - wrapperRect.left + wrapper.scrollLeft;
+        const relativeTop = tableRect.top - wrapperRect.top + wrapper.scrollTop;
+        
+        if (colInd) {
+            colInd.style.left = `${relativeX}px`;
+            colInd.style.top = `${relativeTop}px`;
+            colInd.style.height = `${tableRect.height}px`;
+            colInd.style.display = 'block';
+        }
+    } else {
+        if (colInd) colInd.style.display = 'none';
+        
+        let borderY = 0;
+        const rowIndex = cell.parentNode.rowIndex;
+        if (distTop < distBottom) {
+            borderY = rect.top;
+            currentHoverRowIndex = rowIndex;
+            currentHoverRowPos = 'before';
+        } else {
+            borderY = rect.bottom;
+            currentHoverRowIndex = rowIndex;
+            currentHoverRowPos = 'after';
+        }
+        
+        const relativeY = borderY - wrapperRect.top + wrapper.scrollTop;
+        const relativeLeft = tableRect.left - wrapperRect.left + wrapper.scrollLeft;
+        
+        if (rowInd) {
+            rowInd.style.top = `${relativeY}px`;
+            rowInd.style.left = `${relativeLeft}px`;
+            rowInd.style.width = `${tableRect.width}px`;
+            rowInd.style.display = 'block';
+        }
+    }
+}
+
+function insertColumnAt(table, colIndex, position) {
+    const rows = table.querySelectorAll('tr');
+    
+    rows.forEach(row => {
+        const cellTag = row.parentNode.tagName.toLowerCase() === 'thead' ? 'th' : 'td';
+        const newCell = document.createElement(cellTag);
+        newCell.innerHTML = 'セル';
+        
+        if (position === 'before') {
+            const targetCell = row.cells[colIndex];
+            if (targetCell) {
+                row.insertBefore(newCell, targetCell);
+            } else {
+                row.appendChild(newCell);
+            }
+        } else {
+            const targetCell = row.cells[colIndex];
+            if (targetCell) {
+                row.insertBefore(newCell, targetCell.nextSibling);
+            } else {
+                row.appendChild(newCell);
+            }
+        }
+    });
+    
+    handleTableFocus();
+    syncVisualToSource();
+    hideTableIndicators();
+}
+
+function insertRowAt(table, rowIndex, position) {
+    const rows = table.querySelectorAll('tr');
+    const targetRow = rows[rowIndex];
+    if (!targetRow) return;
+    
+    const cellCount = targetRow.cells.length;
+    const newTr = document.createElement('tr');
+    
+    for (let i = 0; i < cellCount; i++) {
+        const newCell = document.createElement('td');
+        newCell.innerHTML = 'セル';
+        newTr.appendChild(newCell);
+    }
+    
+    if (position === 'before') {
+        const parentTag = targetRow.parentNode.tagName.toLowerCase();
+        if (parentTag === 'thead') {
+            let tbody = table.querySelector('tbody');
+            if (!tbody) {
+                tbody = document.createElement('tbody');
+                table.appendChild(tbody);
+            }
+            tbody.insertBefore(newTr, tbody.firstChild);
+        } else {
+            targetRow.parentNode.insertBefore(newTr, targetRow);
+        }
+    } else {
+        const parentTag = targetRow.parentNode.tagName.toLowerCase();
+        if (parentTag === 'thead') {
+            let tbody = table.querySelector('tbody');
+            if (!tbody) {
+                tbody = document.createElement('tbody');
+                table.appendChild(tbody);
+            }
+            tbody.insertBefore(newTr, tbody.firstChild);
+        } else {
+            targetRow.parentNode.insertBefore(newTr, targetRow.nextSibling);
+        }
+    }
+    
+    handleTableFocus();
+    syncVisualToSource();
+    hideTableIndicators();
+}
+
 // --- Visual Table Column / Row Editors ---
 function handleTableFocus() {
     if (currentMode !== 'visual') {
@@ -1284,6 +1493,31 @@ function setupEventListeners() {
     // Track table cell focus in visual mode
     previewOutput.addEventListener('click', handleTableFocus);
     previewOutput.addEventListener('keyup', handleTableFocus);
+    
+    // Table border hover insertion listeners
+    previewOutput.addEventListener('mousemove', handleTableBorderHover);
+    previewContainer.addEventListener('mouseleave', hideTableIndicators);
+    previewContainer.addEventListener('scroll', hideTableIndicators);
+    
+    const colIndicator = document.getElementById('table-col-indicator');
+    if (colIndicator) {
+        colIndicator.querySelector('.indicator-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (currentHoverTable && currentHoverColIndex !== -1) {
+                insertColumnAt(currentHoverTable, currentHoverColIndex, currentHoverColPos);
+            }
+        });
+    }
+    
+    const rowIndicator = document.getElementById('table-row-indicator');
+    if (rowIndicator) {
+        rowIndicator.querySelector('.indicator-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (currentHoverTable && currentHoverRowIndex !== -1) {
+                insertRowAt(currentHoverTable, currentHoverRowIndex, currentHoverRowPos);
+            }
+        });
+    }
     
     // Textarea input
     textarea.addEventListener('input', debounceRender);
