@@ -20,6 +20,13 @@ let activeEditingType = null;
 // Table editing state
 let activeTableCell = null;
 
+// Slash Command state
+let slashMenuOpen = false;
+let slashMenuSelectedIndex = 0;
+
+// Link Tooltip state
+let activeLinkNode = null;
+
 // DOM Elements
 const textarea = document.getElementById('markdown-textarea');
 const previewOutput = document.getElementById('preview-output');
@@ -854,6 +861,7 @@ function formatText(command, value = null) {
     if (currentMode === 'source') {
         let tokenBefore = '';
         let tokenAfter = '';
+        let url = null;
         
         switch (command) {
             case 'bold':
@@ -874,12 +882,37 @@ function formatText(command, value = null) {
                 tokenBefore = '\n1. '; break;
             case 'table':
                 tokenBefore = '\n\n| ヘッダー1 | ヘッダー2 |\n| --- | --- |\n| セル1 | セル2 |\n\n'; break;
+            case 'link': {
+                const start = textarea.selectionStart;
+                const end = textarea.selectionEnd;
+                const text = textarea.value;
+                const defaultText = text.substring(start, end);
+                
+                url = prompt('リンク先URLを入力してください:', 'https://');
+                if (url === null) return;
+                
+                let linkText = prompt('表示名（テキスト）を入力してください（空の場合はURLを使用します）:', defaultText);
+                if (linkText === null) return;
+                if (linkText.trim() === '') {
+                    linkText = url;
+                }
+                
+                const replacement = `[${linkText}](${url})`;
+                textarea.value = text.substring(0, start) + replacement + text.substring(end);
+                
+                textarea.focus();
+                textarea.selectionStart = start;
+                textarea.selectionEnd = start + replacement.length;
+                
+                debounceRender();
+                return;
+            }
         }
         
         const start = textarea.selectionStart;
         const end = textarea.selectionEnd;
         const text = textarea.value;
-        const selectedText = text.substring(start, end);
+        let selectedText = text.substring(start, end);
         
         const replacement = tokenBefore + selectedText + tokenAfter;
         textarea.value = text.substring(0, start) + replacement + text.substring(end);
@@ -919,6 +952,48 @@ function formatText(command, value = null) {
                 `;
                 insertNodeAtSelection(table);
                 break;
+            case 'link': {
+                const selection = window.getSelection();
+                if (!selection.rangeCount) return;
+                const range = selection.getRangeAt(0);
+                
+                let defaultText = '';
+                if (!range.collapsed) {
+                    defaultText = range.toString();
+                }
+                
+                const url = prompt('リンク先URLを入力してください:', 'https://');
+                if (url === null) return;
+                
+                let linkText = prompt('表示名（テキスト）を入力してください（空の場合はURLを使用します）:', defaultText);
+                if (linkText === null) return;
+                if (linkText.trim() === '') {
+                    linkText = url;
+                }
+                
+                if (range.collapsed) {
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.textContent = linkText;
+                    insertNodeAtSelection(a);
+                } else {
+                    if (defaultText !== linkText) {
+                        range.deleteContents();
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.textContent = linkText;
+                        range.insertNode(a);
+                        
+                        range.setStartAfter(a);
+                        range.setEndAfter(a);
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                    } else {
+                        document.execCommand('createLink', false, url);
+                    }
+                }
+                break;
+            }
         }
         syncVisualToSource();
     }
@@ -1292,6 +1367,237 @@ function insertRowAt(table, rowIndex, position) {
     hideTableIndicators();
 }
 
+// --- Visual Mode Slash Command Popup Controls ---
+function showSlashMenu(range) {
+    const slashMenu = document.getElementById('slash-menu');
+    if (!slashMenu) return;
+    
+    let rect = null;
+    try {
+        rect = range.getBoundingClientRect();
+    } catch (err) {}
+    
+    // Fallback if range rect is empty
+    if (!rect || rect.height === 0 || rect.width === 0) {
+        const selection = window.getSelection();
+        if (selection.rangeCount) {
+            let curr = selection.getRangeAt(0).startContainer;
+            const activeBlock = getParentBlock(curr);
+            if (activeBlock) {
+                rect = activeBlock.getBoundingClientRect();
+            }
+        }
+    }
+    
+    if (!rect) return;
+    
+    const wrapper = document.getElementById('preview-container');
+    const wrapperRect = wrapper.getBoundingClientRect();
+    
+    // Absolute position relative to preview wrapper
+    const left = rect.left - wrapperRect.left + wrapper.scrollLeft;
+    // Position below caret
+    const top = rect.bottom - wrapperRect.top + wrapper.scrollTop + 5;
+    
+    slashMenu.style.left = `${left}px`;
+    slashMenu.style.top = `${top}px`;
+    slashMenu.style.display = 'block';
+    
+    slashMenuOpen = true;
+    selectSlashMenuItem(0);
+}
+
+function closeSlashMenu() {
+    const slashMenu = document.getElementById('slash-menu');
+    if (slashMenu) {
+        slashMenu.style.display = 'none';
+    }
+    slashMenuOpen = false;
+}
+
+function selectSlashMenuItem(index) {
+    const items = document.querySelectorAll('.slash-menu-item');
+    if (!items.length) return;
+    
+    items.forEach((item, idx) => {
+        if (idx === index) {
+            item.classList.add('selected');
+            item.scrollIntoView({ block: 'nearest' });
+        } else {
+            item.classList.remove('selected');
+        }
+    });
+    
+    slashMenuSelectedIndex = index;
+}
+
+function removeSlashTrigger() {
+    const selection = window.getSelection();
+    if (!selection.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    const container = range.startContainer;
+    
+    if (container.nodeType === Node.TEXT_NODE) {
+        const text = container.textContent;
+        const offset = range.startOffset;
+        if (offset > 0 && text.charAt(offset - 1) === '/') {
+            // Remove the '/' character
+            container.textContent = text.slice(0, offset - 1) + text.slice(offset);
+            
+            // Restore selection caret
+            const newRange = document.createRange();
+            newRange.setStart(container, offset - 1);
+            newRange.setEnd(container, offset - 1);
+            selection.removeAllRanges();
+            selection.addRange(newRange);
+        }
+    }
+}
+
+function executeSlashMenuItem(item) {
+    const action = item.getAttribute('data-action');
+    
+    // First remove the slash from text
+    removeSlashTrigger();
+    closeSlashMenu();
+    
+    if (templates[action]) {
+        // Mermaid Insert
+        insertMermaidVisualTemplate(templates[action]);
+    } else {
+        // Formatting insert
+        formatText(action);
+    }
+}
+
+function handleSlashMenuKeydown(e) {
+    if (!slashMenuOpen) return;
+    
+    const items = document.querySelectorAll('.slash-menu-item');
+    if (!items.length) return;
+    
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const nextIdx = (slashMenuSelectedIndex + 1) % items.length;
+        selectSlashMenuItem(nextIdx);
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const prevIdx = (slashMenuSelectedIndex - 1 + items.length) % items.length;
+        selectSlashMenuItem(prevIdx);
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        executeSlashMenuItem(items[slashMenuSelectedIndex]);
+    } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeSlashMenu();
+    }
+}
+
+// --- Visual Mode Link Tooltip Popup Controls ---
+function showLinkTooltip(linkNode) {
+    const tooltip = document.getElementById('link-tooltip');
+    const tooltipUrl = document.getElementById('link-tooltip-url');
+    if (!tooltip || !tooltipUrl) return;
+    
+    activeLinkNode = linkNode;
+    
+    const href = linkNode.getAttribute('href') || '';
+    tooltipUrl.href = href;
+    tooltipUrl.textContent = href;
+    
+    const rect = linkNode.getBoundingClientRect();
+    const wrapper = document.getElementById('preview-container');
+    const wrapperRect = wrapper.getBoundingClientRect();
+    
+    // Position tooltip below the link element
+    const left = rect.left - wrapperRect.left + wrapper.scrollLeft;
+    const top = rect.bottom - wrapperRect.top + wrapper.scrollTop + 5;
+    
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+    tooltip.style.display = 'flex';
+}
+
+function hideLinkTooltip() {
+    const tooltip = document.getElementById('link-tooltip');
+    if (tooltip) {
+        tooltip.style.display = 'none';
+    }
+    activeLinkNode = null;
+}
+
+function editActiveLink() {
+    if (!activeLinkNode) return;
+    
+    const oldUrl = activeLinkNode.getAttribute('href') || '';
+    const oldText = activeLinkNode.textContent || '';
+    
+    const url = prompt('リンク先URLを入力してください:', oldUrl);
+    if (url === null) return;
+    
+    let linkText = prompt('表示名（テキスト）を入力してください（空の場合はURLを使用します）:', oldText);
+    if (linkText === null) return;
+    if (linkText.trim() === '') {
+        linkText = url;
+    }
+    
+    activeLinkNode.setAttribute('href', url);
+    activeLinkNode.textContent = linkText;
+    
+    syncVisualToSource();
+    hideLinkTooltip();
+}
+
+function unlinkActiveLink() {
+    if (!activeLinkNode) return;
+    
+    const parent = activeLinkNode.parentNode;
+    if (parent) {
+        while (activeLinkNode.firstChild) {
+            parent.insertBefore(activeLinkNode.firstChild, activeLinkNode);
+        }
+        parent.removeChild(activeLinkNode);
+    }
+    
+    syncVisualToSource();
+    hideLinkTooltip();
+}
+
+function checkSlashCommandTrigger(e) {
+    if (currentMode !== 'visual') return;
+    
+    // Trigger on keyUp to capture the input character
+    if (e.key === '/') {
+        setTimeout(() => {
+            const selection = window.getSelection();
+            if (!selection.rangeCount) return;
+            const range = selection.getRangeAt(0);
+            const container = range.startContainer;
+            
+            let isAtStart = false;
+            
+            if (container.nodeType === Node.TEXT_NODE) {
+                const text = container.textContent;
+                const offset = range.startOffset;
+                // Offset is 1 since '/' was just entered at start of block
+                if (offset === 1 && text.startsWith('/')) {
+                    isAtStart = true;
+                }
+            } else if (container.nodeType === Node.ELEMENT_NODE) {
+                // If typed directly into empty element
+                const activeBlock = getParentBlock(container);
+                if (activeBlock && activeBlock.textContent.startsWith('/')) {
+                    isAtStart = true;
+                }
+            }
+            
+            if (isAtStart) {
+                showSlashMenu(range);
+            }
+        }, 10);
+    }
+}
+
 // --- Visual Table Column / Row Editors ---
 function handleTableFocus() {
     if (currentMode !== 'visual') {
@@ -1464,6 +1770,7 @@ function setupEventListeners() {
     document.getElementById('btn-fmt-bold').addEventListener('click', () => formatText('bold'));
     document.getElementById('btn-fmt-italic').addEventListener('click', () => formatText('italic'));
     document.getElementById('btn-fmt-strike').addEventListener('click', () => formatText('strikeThrough'));
+    document.getElementById('btn-fmt-link').addEventListener('click', () => formatText('link'));
     document.getElementById('btn-fmt-h1').addEventListener('click', () => formatText('h1'));
     document.getElementById('btn-fmt-h2').addEventListener('click', () => formatText('h2'));
     document.getElementById('btn-fmt-h3').addEventListener('click', () => formatText('h3'));
@@ -1494,11 +1801,97 @@ function setupEventListeners() {
     previewOutput.addEventListener('click', handleTableFocus);
     previewOutput.addEventListener('keyup', handleTableFocus);
     
+    // Slash command keydown handler (navigation and execution)
+    previewOutput.addEventListener('keydown', (e) => {
+        if (slashMenuOpen) {
+            handleSlashMenuKeydown(e);
+        }
+    });
+    
+    // Slash command keyup trigger / cleanup handler
+    previewOutput.addEventListener('keyup', (e) => {
+        if (slashMenuOpen) {
+            // Close if '/' is deleted or focus moves away
+            const selection = window.getSelection();
+            if (selection.rangeCount) {
+                const range = selection.getRangeAt(0);
+                const container = range.startContainer;
+                if (container.nodeType === Node.TEXT_NODE) {
+                    const text = container.textContent;
+                    const offset = range.startOffset;
+                    if (offset === 0 || text.charAt(offset - 1) !== '/') {
+                        closeSlashMenu();
+                    }
+                } else {
+                    closeSlashMenu();
+                }
+            } else {
+                closeSlashMenu();
+            }
+        } else {
+            checkSlashCommandTrigger(e);
+        }
+    });
+    
+    // Prevent navigating links in visual mode & show tooltip
+    previewOutput.addEventListener('click', (e) => {
+        if (currentMode === 'visual') {
+            const link = e.target.closest('a');
+            if (link) {
+                e.preventDefault();
+                e.stopPropagation();
+                showLinkTooltip(link);
+            } else {
+                hideLinkTooltip();
+            }
+        }
+    });
+
+    // Close slash menu and link tooltip when clicking outside
+    document.addEventListener('click', (e) => {
+        if (slashMenuOpen && !e.target.closest('#slash-menu')) {
+            closeSlashMenu();
+        }
+        if (activeLinkNode && !e.target.closest('#link-tooltip') && !e.target.closest('a')) {
+            hideLinkTooltip();
+        }
+    });
+    
+    // Bind click and mousedown events on slash menu items
+    document.querySelectorAll('.slash-menu-item').forEach(item => {
+        item.addEventListener('mousedown', (e) => {
+            e.preventDefault(); // Prevent selection / focus from leaving the editor
+        });
+        item.addEventListener('click', (e) => {
+            e.stopPropagation();
+            executeSlashMenuItem(item);
+        });
+    });
+    
     // Table border hover insertion listeners
     previewOutput.addEventListener('mousemove', handleTableBorderHover);
     previewContainer.addEventListener('mouseleave', hideTableIndicators);
-    previewContainer.addEventListener('scroll', hideTableIndicators);
+    previewContainer.addEventListener('scroll', () => {
+        hideTableIndicators();
+        hideLinkTooltip();
+    });
     
+    // Link Tooltip buttons
+    const btnLinkEdit = document.getElementById('btn-link-edit');
+    if (btnLinkEdit) {
+        btnLinkEdit.addEventListener('click', (e) => {
+            e.stopPropagation();
+            editActiveLink();
+        });
+    }
+    const btnLinkUnlink = document.getElementById('btn-link-unlink');
+    if (btnLinkUnlink) {
+        btnLinkUnlink.addEventListener('click', (e) => {
+            e.stopPropagation();
+            unlinkActiveLink();
+        });
+    }
+
     const colIndicator = document.getElementById('table-col-indicator');
     if (colIndicator) {
         colIndicator.querySelector('.indicator-btn').addEventListener('click', (e) => {
@@ -1617,6 +2010,10 @@ function setupEventListeners() {
         if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
             e.preventDefault();
             formatText('italic');
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            formatText('link');
         }
         if ((e.ctrlKey || e.metaKey) && e.key === 's') {
             e.preventDefault();
@@ -1812,8 +2209,8 @@ async function exportToHTML() {
     // Clone previewOutput to resolve IndexedDB files to Base64 for export
     const exportClone = previewOutput.cloneNode(true);
     
-    // Remove all edit overlays and zoom controls
-    exportClone.querySelectorAll('.block-edit-overlay, .mermaid-zoom-controls').forEach(el => el.remove());
+    // Remove all edit overlays, zoom controls, and slash menu
+    exportClone.querySelectorAll('.block-edit-overlay, .mermaid-zoom-controls, .slash-menu-popup, .link-tooltip-popup').forEach(el => el.remove());
     
     // Unwrap the editable-block-wrapper divs
     exportClone.querySelectorAll('.editable-block-wrapper').forEach(wrapper => {

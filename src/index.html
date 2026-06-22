@@ -56,6 +56,9 @@
                     <button id="btn-fmt-strike" title="打ち消し線">
                         <i class="fa-solid fa-strikethrough"></i>
                     </button>
+                    <button id="btn-fmt-link" title="リンク挿入 (Ctrl+K)">
+                        <i class="fa-solid fa-link"></i>
+                    </button>
                     <span class="mini-separator"></span>
                     <button id="btn-fmt-h1" title="見出し1">
                         <span style="font-weight:bold; font-size:0.85rem;">H1</span>
@@ -257,6 +260,43 @@
                         </div>
                         <div id="table-row-indicator" class="table-border-indicator row-indicator" style="display: none;">
                             <button class="indicator-btn" title="行を追加" type="button"><i class="fa-solid fa-plus"></i></button>
+                        </div>
+                        
+                        <!-- Slash Command Menu Popup -->
+                        <div id="slash-menu" class="slash-menu-popup" style="display: none;" contenteditable="false">
+                            <!-- Formatting Section -->
+                            <div class="slash-menu-section">
+                                <div class="slash-menu-section-title">書式設定</div>
+                                <div class="slash-menu-item" data-action="h1"><i class="fa-solid fa-heading"></i> 見出し 1</div>
+                                <div class="slash-menu-item" data-action="h2"><i class="fa-solid fa-heading"></i> 見出し 2</div>
+                                <div class="slash-menu-item" data-action="h3"><i class="fa-solid fa-heading"></i> 見出し 3</div>
+                                <div class="slash-menu-item" data-action="ul"><i class="fa-solid fa-list-ul"></i> 箇条書きリスト</div>
+                                <div class="slash-menu-item" data-action="ol"><i class="fa-solid fa-list-ol"></i> 番号付きリスト</div>
+                                <div class="slash-menu-item" data-action="table"><i class="fa-solid fa-table"></i> テーブル</div>
+                                <div class="slash-menu-item" data-action="link"><i class="fa-solid fa-link"></i> リンク</div>
+                            </div>
+                            <!-- Mermaid Section -->
+                            <div class="slash-menu-section">
+                                <div class="slash-menu-section-title">図表の挿入</div>
+                                <div class="slash-menu-item" data-action="flowchart"><i class="fa-solid fa-network-wired"></i> フローチャート</div>
+                                <div class="slash-menu-item" data-action="sequence"><i class="fa-solid fa-arrows-left-right"></i> シーケンス図</div>
+                                <div class="slash-menu-item" data-action="class-diagram"><i class="fa-solid fa-cube"></i> クラス図</div>
+                                <div class="slash-menu-item" data-action="state"><i class="fa-solid fa-circle-nodes"></i> 状態遷移図</div>
+                                <div class="slash-menu-item" data-action="gantt"><i class="fa-solid fa-chart-gantt"></i> ガントチャート</div>
+                                <div class="slash-menu-item" data-action="git-graph"><i class="fa-solid fa-code-fork"></i> Gitグラフ</div>
+                                <div class="slash-menu-item" data-action="pie-chart"><i class="fa-solid fa-chart-pie"></i> 円グラフ</div>
+                                <div class="slash-menu-item" data-action="mindmap"><i class="fa-solid fa-brain"></i> マインドマップ</div>
+                                <div class="slash-menu-item" data-action="er-diagram"><i class="fa-solid fa-database"></i> ER図</div>
+                                <div class="slash-menu-item" data-action="user-journey"><i class="fa-solid fa-route"></i> ユーザージャーニー</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Link Tooltip Popup -->
+                        <div id="link-tooltip" class="link-tooltip-popup" style="display: none;" contenteditable="false">
+                            <a id="link-tooltip-url" href="#" target="_blank" title="リンクを開く"></a>
+                            <span class="mini-separator"></span>
+                            <button id="btn-link-edit" title="リンクを編集"><i class="fa-solid fa-pen"></i></button>
+                            <button id="btn-link-unlink" title="リンクを解除" style="color: var(--color-danger);"><i class="fa-solid fa-unlink"></i></button>
                         </div>
                     </div>
                 </div>

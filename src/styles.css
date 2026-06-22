@@ -521,6 +521,112 @@ button {
     left: 0;
 }
 
+/* --- Link Tooltip Popup --- */
+.link-tooltip-popup {
+    position: absolute;
+    background-color: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.35rem 0.60rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    box-shadow: var(--shadow-lg), 0 5px 15px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.8rem;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.link-tooltip-popup a {
+    color: var(--color-primary);
+    text-decoration: underline;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+.link-tooltip-popup a:hover {
+    color: var(--color-primary-active);
+}
+.link-tooltip-popup button {
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+.link-tooltip-popup button:hover {
+    background-color: var(--bg-hover);
+    color: var(--color-text);
+}
+
+/* --- Slash Command Menu Popup --- */
+.slash-menu-popup {
+    position: absolute;
+    background-color: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: var(--shadow-lg), 0 10px 30px rgba(0, 0, 0, 0.25);
+    z-index: 1000; /* Should be on top of other preview elements */
+    width: 250px;
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 0.5rem 0;
+    font-family: 'Inter', sans-serif;
+    scrollbar-width: thin;
+}
+
+.slash-menu-section-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+    padding: 0.5rem 0.85rem 0.25rem 0.85rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.slash-menu-section:first-child .slash-menu-section-title {
+    border-top: none;
+    padding-top: 0.25rem;
+}
+
+.slash-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.45rem 0.85rem;
+    font-size: 0.85rem;
+    color: var(--color-text);
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.slash-menu-item i {
+    width: 16px;
+    text-align: center;
+    color: var(--color-text-muted);
+    font-size: 0.8rem;
+}
+
+.slash-menu-item:hover,
+.slash-menu-item.selected {
+    background-color: var(--color-primary-glow);
+    color: var(--color-primary);
+}
+
+.slash-menu-item:hover i,
+.slash-menu-item.selected i {
+    color: var(--color-primary);
+}
+
 /* --- Markdown Body Preview Styling --- */
 .markdown-body {
     font-size: 1rem;
@@ -1128,7 +1234,9 @@ button {
     }
     
     .mermaid-zoom-controls,
-    .table-border-indicator {
+    .table-border-indicator,
+    .slash-menu-popup,
+    .link-tooltip-popup {
         display: none !important;
     }
     
