@@ -35,3 +35,9 @@ go.work.sum
 # Distribution directories
 dist/
 bin/
+release/
+
+# Release packaging scripts & assets
+release.sh
+scripts/release.go
+RELEASE_NOTES.md
