@@ -30,7 +30,7 @@ cp src/wasm_exec.js dist/
 # 3. Build WebAssembly parser
 echo "Compiling WebAssembly module..."
 cd src
-GOOS=js GOARCH=wasm "$GO_BIN" build -o ../dist/main.wasm main.go
+GOOS=js GOARCH=wasm "$GO_BIN" build -o ../dist/main.wasm
 cd ..
 
 # 4. Build native server binary (embedding dist/)

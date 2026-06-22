@@ -593,9 +593,66 @@ button {
     position: relative;
 }
 
-.mermaid-container svg {
+.mermaid-viewport {
+    width: 100%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    min-height: 150px;
+}
+
+.mermaid-viewport svg {
     max-width: 100%;
     height: auto;
+    transform-origin: center center;
+    transition: transform 0.15s ease-out;
+}
+
+.mermaid-zoom-controls {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    display: flex;
+    gap: 4px;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: auto;
+}
+
+.mermaid-container:hover .mermaid-zoom-controls {
+    opacity: 1;
+}
+
+.zoom-btn {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(19, 21, 26, 0.8);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    border: 1px solid var(--border-color);
+    color: var(--color-text);
+    border-radius: 6px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+.zoom-btn:hover {
+    background-color: var(--color-primary);
+    color: #ffffff;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 8px var(--color-primary-glow);
+}
+
+.zoom-btn i {
+    pointer-events: none;
 }
 
 .mermaid-error {
@@ -762,7 +819,7 @@ button {
     right: 8px;
     opacity: 0;
     transition: opacity 0.2s ease;
-    z-index: 5;
+    z-index: 20;
 }
 
 .editable-block-wrapper:hover .block-edit-overlay {
@@ -1012,6 +1069,23 @@ button {
     .mermaid-container {
         background-color: #ffffff !important;
         border: 1px solid #ccc !important;
+        padding: 1rem !important;
+    }
+    
+    .mermaid-zoom-controls {
+        display: none !important;
+    }
+    
+    .mermaid-viewport {
+        overflow: visible !important;
+        cursor: default !important;
+        min-height: auto !important;
+    }
+    
+    .mermaid-viewport svg {
+        transform: none !important;
+        max-width: 100% !important;
+        height: auto !important;
     }
     
     .markdown-body a {

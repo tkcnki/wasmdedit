@@ -300,7 +300,7 @@ function initMermaid() {
 
 // --- Markdown Renderer (Source -> HTML) ---
 function renderMarkdown() {
-    if (!wasmReady) return;
+    if (!wasmReady) return Promise.resolve();
     
     const markdownText = textarea.value;
     
@@ -323,10 +323,176 @@ function renderMarkdown() {
     Prism.highlightAllUnder(previewOutput);
     
     // Asynchronously render Mermaid diagrams
-    renderMermaidDiagrams();
+    const mermaidPromise = renderMermaidDiagrams();
     
     // Autosave Markdown source
     localStorage.setItem('wasmdedit_markdown', markdownText);
+    
+    return mermaidPromise;
+}
+
+// --- Mermaid Zoom & Pan Functions ---
+function applyZoomPanToMermaid(container, svgMarkup) {
+    container.innerHTML = '';
+    
+    const viewport = document.createElement('div');
+    viewport.className = 'mermaid-viewport';
+    viewport.innerHTML = svgMarkup;
+    container.appendChild(viewport);
+    
+    const controls = document.createElement('div');
+    controls.className = 'mermaid-zoom-controls';
+    controls.setAttribute('contenteditable', 'false');
+    controls.innerHTML = `
+        <button class="zoom-btn zoom-in" title="拡大" type="button"><i class="fa-solid fa-plus"></i></button>
+        <button class="zoom-btn zoom-out" title="縮小" type="button"><i class="fa-solid fa-minus"></i></button>
+        <button class="zoom-btn zoom-reset" title="リセット" type="button"><i class="fa-solid fa-rotate-left"></i></button>
+    `;
+    container.appendChild(controls);
+    
+    setupMermaidZoomPan(container, viewport);
+}
+
+function setupMermaidZoomPan(container, viewport) {
+    const svg = viewport.querySelector('svg');
+    if (!svg) return;
+    
+    let scale = 1;
+    let translateX = 0;
+    let translateY = 0;
+    let isDragging = false;
+    
+    svg.style.transformOrigin = 'center center';
+    svg.style.transition = 'transform 0.15s ease-out';
+    svg.style.cursor = 'grab';
+    
+    function updateTransform(useTransition = true) {
+        svg.style.transition = useTransition ? 'transform 0.15s ease-out' : 'none';
+        svg.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+    }
+    
+    // Mouse Wheel Zoom
+    viewport.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const zoomFactor = 1.1;
+        if (e.deltaY < 0) {
+            scale = Math.min(scale * zoomFactor, 8);
+        } else {
+            scale = Math.max(scale / zoomFactor, 0.15);
+        }
+        updateTransform(true);
+    }, { passive: false });
+    
+    // Mouse Drag Pan
+    viewport.addEventListener('mousedown', (e) => {
+        if (e.target.closest('.mermaid-zoom-controls')) return;
+        
+        isDragging = true;
+        svg.style.cursor = 'grabbing';
+        
+        const startX = e.clientX - translateX;
+        const startY = e.clientY - translateY;
+        
+        function onMouseMove(moveEvent) {
+            if (!isDragging) return;
+            translateX = moveEvent.clientX - startX;
+            translateY = moveEvent.clientY - startY;
+            updateTransform(false); // disable transition for smooth dragging
+        }
+        
+        function onMouseUp() {
+            isDragging = false;
+            svg.style.cursor = 'grab';
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+        }
+        
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+        
+        e.preventDefault();
+    });
+    
+    // Touch Zoom & Pan (Mobile support)
+    let touchStartDist = 0;
+    let touchStartScale = 1;
+    let isPinching = false;
+    let touchStartX = 0;
+    let touchStartY = 0;
+    
+    viewport.addEventListener('touchstart', (e) => {
+        if (e.target.closest('.mermaid-zoom-controls')) return;
+        
+        if (e.touches.length === 2) {
+            isPinching = true;
+            touchStartDist = Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+            );
+            touchStartScale = scale;
+        } else if (e.touches.length === 1) {
+            isDragging = true;
+            touchStartX = e.touches[0].clientX - translateX;
+            touchStartY = e.touches[0].clientY - translateY;
+        }
+    });
+    
+    viewport.addEventListener('touchmove', (e) => {
+        if (isPinching && e.touches.length === 2) {
+            const dist = Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+            );
+            scale = Math.min(Math.max(touchStartScale * (dist / touchStartDist), 0.15), 8);
+            updateTransform(false);
+            e.preventDefault();
+        } else if (isDragging && e.touches.length === 1) {
+            translateX = e.touches[0].clientX - touchStartX;
+            translateY = e.touches[0].clientY - touchStartY;
+            updateTransform(false);
+            e.preventDefault();
+        }
+    }, { passive: false });
+    
+    viewport.addEventListener('touchend', (e) => {
+        if (e.touches.length < 2) {
+            isPinching = false;
+        }
+        if (e.touches.length === 0) {
+            isDragging = false;
+        }
+    });
+    
+    // Zoom control button click handlers with safety checks
+    const btnIn = container.querySelector('.zoom-in');
+    const btnOut = container.querySelector('.zoom-out');
+    const btnReset = container.querySelector('.zoom-reset');
+    
+    if (btnIn) {
+        btnIn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            scale = Math.min(scale * 1.25, 8);
+            updateTransform(true);
+        });
+    }
+    
+    if (btnOut) {
+        btnOut.addEventListener('click', (e) => {
+            e.stopPropagation();
+            scale = Math.max(scale / 1.25, 0.15);
+            updateTransform(true);
+        });
+    }
+    
+    if (btnReset) {
+        btnReset.addEventListener('click', (e) => {
+            e.stopPropagation();
+            scale = 1;
+            translateX = 0;
+            translateY = 0;
+            updateTransform(true);
+        });
+    }
 }
 
 // --- Mermaid Render Engine ---
@@ -347,7 +513,7 @@ async function renderMermaidDiagrams() {
         
         try {
             const { svg } = await mermaid.render(renderId, rawCode);
-            container.innerHTML = svg;
+            applyZoomPanToMermaid(container, svg);
         } catch (err) {
             console.error("Mermaid Render Error:", err);
             
@@ -575,7 +741,7 @@ async function saveEditModal() {
         
         try {
             const { svg } = await mermaid.render(renderId, editedCode);
-            activeEditingElement.innerHTML = svg;
+            applyZoomPanToMermaid(activeEditingElement, svg);
         } catch (err) {
             console.error(err);
             activeEditingElement.innerHTML = `<div class="mermaid-error">Mermaid 構文エラー:\n${err.message || err}</div>`;
@@ -650,7 +816,7 @@ function insertMermaidVisualTemplate(templateText) {
     // Render Async
     const renderId = `mermaid-render-${Date.now()}`;
     mermaid.render(renderId, rawCode).then(({ svg }) => {
-        container.innerHTML = svg;
+        applyZoomPanToMermaid(container, svg);
         syncVisualToSource();
     }).catch(err => {
         console.error(err);
@@ -1406,11 +1572,32 @@ async function exportToHTML() {
         syncVisualToSource();
     }
     
-    // Re-render standard HTML to ensure clean DOM
-    renderMarkdown();
+    // Re-render standard HTML to ensure clean DOM, and wait for Mermaid rendering to finish
+    await renderMarkdown();
     
     // Clone previewOutput to resolve IndexedDB files to Base64 for export
     const exportClone = previewOutput.cloneNode(true);
+    
+    // Remove all edit overlays and zoom controls
+    exportClone.querySelectorAll('.block-edit-overlay, .mermaid-zoom-controls').forEach(el => el.remove());
+    
+    // Unwrap the editable-block-wrapper divs
+    exportClone.querySelectorAll('.editable-block-wrapper').forEach(wrapper => {
+        const child = wrapper.firstElementChild;
+        if (child) {
+            wrapper.parentNode.insertBefore(child, wrapper);
+        }
+        wrapper.remove();
+    });
+
+    // Unwrap the mermaid-viewport divs to restore standard SVG position
+    exportClone.querySelectorAll('.mermaid-viewport').forEach(viewport => {
+        const child = viewport.firstElementChild;
+        if (child) {
+            viewport.parentNode.insertBefore(child, viewport);
+        }
+        viewport.remove();
+    });
     
     const images = exportClone.querySelectorAll('img');
     for (let i = 0; i < images.length; i++) {
